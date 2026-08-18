@@ -1,9 +1,10 @@
 """
 Screen capture using mss + Pillow.
 Captures the primary monitor and encodes to JPEG.
+Thread-safe: each calling thread gets its own mss instance via threading.local.
 """
-
 import io
+import threading
 import mss
 from PIL import Image
 
@@ -11,8 +12,10 @@ from PIL import Image
 class ScreenCapture:
     def __init__(self, quality: int = 70):
         self.quality = quality
-        self._sct = mss.mss()
-        self._monitor = self._sct.monitors[1]  # primary monitor
+        self._local = threading.local()
+        # Read monitor geometry once on the main thread
+        with mss.mss() as sct:
+            self._monitor = sct.monitors[1]  # primary monitor
 
     @property
     def size(self):
@@ -21,9 +24,16 @@ class ScreenCapture:
     def set_quality(self, q: int):
         self.quality = max(10, min(100, int(q)))
 
+    def _get_sct(self):
+        """Return a thread-local mss instance, creating one if needed."""
+        if not hasattr(self._local, "sct"):
+            self._local.sct = mss.mss()
+        return self._local.sct
+
     def capture_jpeg(self) -> bytes:
         """Grab the screen and return JPEG-encoded bytes."""
-        img = self._sct.grab(self._monitor)
+        sct = self._get_sct()
+        img = sct.grab(self._monitor)
         # mss returns BGRA; convert to RGB for JPEG
         pil_img = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
         buf = io.BytesIO()
@@ -31,4 +41,8 @@ class ScreenCapture:
         return buf.getvalue()
 
     def close(self):
-        self._sct.close()
+        if hasattr(self._local, "sct"):
+            try:
+                self._local.sct.close()
+            except Exception:
+                pass
