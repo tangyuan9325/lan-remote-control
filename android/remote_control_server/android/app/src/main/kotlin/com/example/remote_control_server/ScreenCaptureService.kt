@@ -39,19 +39,24 @@ class ScreenCaptureService : Service() {
         private var pendingResultCode = 0
         private var pendingData: Intent? = null
 
-        fun start(context: Context, resultCode: Int, data: Intent) {
+        fun setProjectionData(resultCode: Int, data: Intent) {
             pendingResultCode = resultCode
             pendingData = data
-            val intent = Intent(context, ScreenCaptureService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+        }
+
+        fun start(context: Context) {
+            try {
+                val intent = Intent(context, ScreenCaptureService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {}
         }
 
         fun stop() {
-            instance?.stopSelf()
+            try { instance?.stopSelf() } catch (_: Exception) {}
             instance = null
         }
 
@@ -61,9 +66,7 @@ class ScreenCaptureService : Service() {
                 val stream = ByteArrayOutputStream()
                 bmp.compress(Bitmap.CompressFormat.JPEG, quality, stream)
                 stream.toByteArray()
-            } catch (e: Exception) {
-                null
-            }
+            } catch (e: Exception) { null }
         }
     }
 
@@ -72,18 +75,27 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        try {
+            createNotificationChannel()
+            val notification = buildNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            try { startForeground(NOTIFICATION_ID, buildNotification()) } catch (_: Exception) {}
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startProjection()
+        try { startProjection() } catch (e: Exception) {}
         return START_STICKY
     }
 
     private fun startProjection() {
-        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val data = pendingData ?: return
+        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = manager.getMediaProjection(pendingResultCode, data)
 
         val metrics = DisplayMetrics()
@@ -93,6 +105,7 @@ class ScreenCaptureService : Service() {
         val width = metrics.widthPixels
         val height = metrics.heightPixels
         val density = metrics.densityDpi
+        if (width <= 0 || height <= 0) return
 
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         imageReader?.setOnImageAvailableListener({ reader ->
@@ -103,41 +116,30 @@ class ScreenCaptureService : Service() {
                 val pixelStride = planes[0].pixelStride
                 val rowStride = planes[0].rowStride
                 val rowPadding = rowStride - pixelStride * width
-
-                val bitmap = Bitmap.createBitmap(
-                    width + rowPadding / pixelStride,
-                    height,
-                    Bitmap.Config.ARGB_8888
-                )
+                val bitmapWidth = width + rowPadding / pixelStride
+                val bitmap = Bitmap.createBitmap(bitmapWidth, height, Bitmap.Config.ARGB_8888)
                 bitmap.copyPixelsFromBuffer(buffer)
                 image.close()
-
+                val cropped = if (bitmapWidth != width) {
+                    Bitmap.createBitmap(bitmap, 0, 0, width, height)
+                } else { bitmap }
+                if (cropped !== bitmap) bitmap.recycle()
                 latestBitmap?.recycle()
-                latestBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                bitmap.recycle()
-            } catch (e: Exception) {
-                // Ignore capture errors
-            }
+                latestBitmap = cropped
+            } catch (e: Exception) {}
         }, handler)
 
         virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenCapture",
-            width, height, density,
+            "ScreenCapture", width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface,
-            null, handler
+            imageReader?.surface, null, handler
         )
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "屏幕捕获服务",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "屏幕捕获服务", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
@@ -152,10 +154,12 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        virtualDisplay?.release()
-        imageReader?.close()
-        mediaProjection?.stop()
-        latestBitmap?.recycle()
+        try {
+            virtualDisplay?.release()
+            imageReader?.close()
+            mediaProjection?.stop()
+            latestBitmap?.recycle()
+        } catch (_: Exception) {}
         latestBitmap = null
         instance = null
     }
