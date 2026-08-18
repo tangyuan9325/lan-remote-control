@@ -73,9 +73,13 @@ jobs:
           file build/*.exe 2>/dev/null || echo "Binary files"
 
       - name: Commit EXE to build folder
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          git pull --rebase origin main || true
           git add -f build/*.exe
           git status
           git commit -m "chore: add Windows executables v1.2.0" || echo "No changes to commit"
