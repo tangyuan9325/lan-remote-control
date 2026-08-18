@@ -4,14 +4,44 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.2.0)'
+        required: true
+        default: 'v1.2.0'
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.head_commit.message, '[release]')
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=v1.2.0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tag if needed
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG"
+            git push origin "$TAG" || echo "Tag push may fail (already exists or permission)"
+          fi
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -26,29 +56,44 @@ jobs:
           flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk ../../lan-remote-control-android.apk
 
-      - name: Build Windows Server (Linux binary)
+      - name: Build Windows Server
         run: |
-          pip install pyinstaller mss Pillow pynput
+          pip install pyinstaller mss Pillow pynput 2>/dev/null || true
           cd windows/server
-          pyinstaller --onefile --name RemoteControl-Server main.py || echo "PyInstaller build may fail on Linux for Windows"
-          ls dist/ 2>/dev/null || echo "No dist"
+          pyinstaller --onefile --name RemoteControl-Server main.py 2>/dev/null || echo "PyInstaller skipped"
+          ls dist/ 2>/dev/null && cp dist/RemoteControl-Server ../../RemoteControl-Server || echo "No server binary"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Release ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
           body: |
-            ## LAN Remote Control ${{ github.ref_name }}
+            ## LAN Remote Control ${{ steps.version.outputs.tag }}
 
             ### New Features (v1.2.0)
-            - 📁 File transfer: browse, download, upload remote files
-            - 🎤 Voice chat: PCM 16kHz real-time bidirectional audio
-            - 🪟 PyQt5 WebView modern UI for Windows viewer
-            - 📱 Android file manager and voice chat UI
+            - 📁 **File transfer** — remote directory browsing, download, upload
+            - 🎤 **Voice chat** — PCM 16kHz real-time bidirectional audio
+            - 🪟 **PyQt5 WebView UI** — modern clean interface for Windows viewer
+            - 📱 **Android file manager** — browse and download remote files
+            - 🔊 **Android voice chat** — microphone and speaker support
+
+            ### Protocol v1.2
+            - `0x01` JSON control messages
+            - `0x02` JPEG screen frames
+            - `0x03` File chunks (64KB)
+            - `0x04` PCM audio frames (16-bit, 16kHz, mono)
 
             ### Assets
-            - `lan-remote-control-android.apk` - Android client APK
+            - `lan-remote-control-android.apk` — Android client APK
+            - `RemoteControl-Server` — Windows/Linux server binary (if built)
+
+            ### Usage
+            1. Run `RemoteControl-Server` on the Windows PC to be controlled
+            2. Run the viewer (PyQt5) or install the APK on Android
+            3. Devices are auto-discovered on the same LAN
           files: |
             lan-remote-control-android.apk
+            RemoteControl-Server
           draft: false
           prerelease: false
