@@ -1,8 +1,6 @@
 """
-UDP device discovery for the server (controlled side).
-Listens for DISCOVER broadcasts and replies with server info.
+UDP device discovery for the server.
 """
-
 import socket
 import json
 import threading
@@ -11,10 +9,8 @@ import platform
 DISCOVERY_PORT = 9000
 DISCOVERY_MAGIC = b"DISCOVER"
 
-
 class DiscoveryServer:
-    def __init__(self, control_port: int = 9001, hostname: str = None,
-                 password: str = None):
+    def __init__(self, control_port=9001, hostname=None, password=None):
         self.control_port = control_port
         self.hostname = hostname or socket.gethostname()
         self.password = password
@@ -25,12 +21,10 @@ class DiscoveryServer:
     def start(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # Bind to all interfaces so we can receive broadcasts
         self._sock.bind(("0.0.0.0", DISCOVERY_PORT))
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        print(f"[Discovery] Listening on UDP 0.0.0.0:{DISCOVERY_PORT}")
 
     def _loop(self):
         while self._running:
@@ -39,7 +33,6 @@ class DiscoveryServer:
             except OSError:
                 break
             if data.strip() == DISCOVERY_MAGIC:
-                # Determine our IP on the interface that received the packet
                 local_ip = self._get_local_ip_for(addr[0])
                 reply = {
                     "type": "discovery_response",
@@ -47,16 +40,13 @@ class DiscoveryServer:
                     "ip": local_ip,
                     "port": self.control_port,
                     "os": f"{platform.system()} {platform.release()}",
-                    "version": "1.0.0",
+                    "version": "1.2.0",
                     "password_required": bool(self.password),
                 }
-                self._sock.sendto(
-                    json.dumps(reply).encode("utf-8"), addr
-                )
+                self._sock.sendto(json.dumps(reply).encode("utf-8"), addr)
 
     @staticmethod
-    def _get_local_ip_for(target_ip: str) -> str:
-        """Best-effort: find the local IP used to reach target_ip."""
+    def _get_local_ip_for(target_ip):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect((target_ip, DISCOVERY_PORT))

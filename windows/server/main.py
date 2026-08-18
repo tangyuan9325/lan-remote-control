@@ -1,100 +1,109 @@
 #!/usr/bin/env python3
 """
-LAN Remote Control - Server (controlled side)
-Runs on the Windows PC to be controlled.
-
-Features:
-  - UDP discovery: announces itself on the LAN
-  - TCP control server: streams screen + receives input events
-  - Password protection (optional)
-
-Usage:
-  python main.py                          # no password
-  python main.py --password 1234          # with password
-  python main.py --port 9001 --quality 70
+LAN Remote Control - Server (controlled side) v1.2
+Features: screen streaming, input simulation, file transfer, voice chat.
 """
-
 import argparse
 import json
 import socket
-import struct
 import threading
 import time
 import sys
-
 from protocol import (
-    MSG_JSON, MSG_JPEG, recv_message, send_json, send_jpeg,
+    MSG_JSON, MSG_JPEG, MSG_FILE, MSG_AUDIO,
+    recv_message, send_json, send_jpeg, send_file, send_audio,
 )
 from screen_capture import ScreenCapture
 from input_simulator import InputSimulator
 from discovery import DiscoveryServer
+from file_manager import FileManager
+from audio_handler import AudioHandler
 
 CONTROL_PORT = 9001
 FPS_TARGET = 30
 
-
 class ClientSession:
-    """Handles one connected viewer client."""
-
-    def __init__(self, conn: socket.socket, addr, capture: ScreenCapture,
-                 password: str = None):
+    def __init__(self, conn, addr, capture, password=None):
         self.conn = conn
         self.addr = addr
         self.capture = capture
         self.password = password
         self.input_sim = None
+        self.file_mgr = None
+        self.audio = None
         self.authenticated = False
         self.running = False
         self._stream_thread = None
 
     def start(self):
         self.running = True
-        # Input receiver runs on the main session thread
         try:
             self._handle()
         except (ConnectionError, OSError) as e:
             print(f"[Session {self.addr}] disconnected: {e}")
         finally:
             self.running = False
+            if self.audio:
+                self.audio.stop()
             self.conn.close()
-            print(f"[Session {self.addr}] closed")
 
     def _handle(self):
-        # --- Handshake ---
         msg_type, payload = recv_message(self.conn)
         if msg_type != MSG_JSON:
             return
         msg = json.loads(payload.decode("utf-8"))
         if msg.get("type") != "hello":
             return
-
         if self.password and msg.get("password") != self.password:
             send_json(self.conn, {"type": "hello_fail", "reason": "wrong_password"})
             return
-
         w, h = self.capture.size
         send_json(self.conn, {"type": "hello_ok", "width": w, "height": h})
         self.authenticated = True
         self.input_sim = InputSimulator(w, h)
-        print(f"[Session {self.addr}] authenticated, screen {w}x{h}")
-
-        # Start screen streaming thread
+        self.file_mgr = FileManager(
+            send_json_fn=lambda obj: send_json(self.conn, obj),
+            send_chunk_fn=lambda data: send_file(self.conn, data),
+        )
+        self.audio = AudioHandler(
+            send_audio_fn=lambda data: send_audio(self.conn, data),
+        )
         self._stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
         self._stream_thread.start()
-
-        # Receive input events
         while self.running:
             msg_type, payload = recv_message(self.conn)
-            if msg_type != MSG_JSON:
-                continue
-            self._dispatch(json.loads(payload.decode("utf-8")))
+            if msg_type == MSG_JSON:
+                self._dispatch(json.loads(payload.decode("utf-8")))
+            elif msg_type == MSG_FILE:
+                if self.file_mgr:
+                    self.file_mgr.upload_chunk(payload)
+            elif msg_type == MSG_AUDIO:
+                if self.audio:
+                    self.audio.play_audio(payload)
 
-    def _dispatch(self, msg: dict):
+    def _dispatch(self, msg):
         t = msg.get("type")
         if t == "ping":
             send_json(self.conn, {"type": "pong"})
         elif t == "set_quality":
             self.capture.set_quality(msg.get("quality", 70))
+        elif t == "file_list":
+            if self.file_mgr: self.file_mgr.list_directory(msg.get("path", ""))
+        elif t == "file_download":
+            if self.file_mgr: self.file_mgr.download_file(msg.get("path", ""))
+        elif t == "file_upload_start":
+            if self.file_mgr:
+                self.file_mgr.upload_start(msg.get("path", "."), msg.get("name", "upload"), msg.get("size", 0))
+        elif t == "file_upload_complete":
+            if self.file_mgr: self.file_mgr.upload_complete(msg.get("name", ""))
+        elif t == "voice_start":
+            if self.audio and self.audio.available:
+                self.audio.start_recording()
+                send_json(self.conn, {"type": "voice_ready"})
+            else:
+                send_json(self.conn, {"type": "voice_error", "error": "Audio unavailable"})
+        elif t == "voice_stop":
+            if self.audio: self.audio.stop_recording()
         elif not self.input_sim:
             return
         elif t == "mouse_move":
@@ -131,45 +140,24 @@ class ClientSession:
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-
 def main():
-    parser = argparse.ArgumentParser(description="LAN Remote Control Server")
-    parser.add_argument("--port", type=int, default=CONTROL_PORT,
-                        help=f"TCP control port (default {CONTROL_PORT})")
-    parser.add_argument("--password", type=str, default=None,
-                        help="Optional connection password")
-    parser.add_argument("--quality", type=int, default=70,
-                        help="JPEG quality 10-100 (default 70)")
-    parser.add_argument("--hostname", type=str, default=None,
-                        help="Override displayed hostname")
+    parser = argparse.ArgumentParser(description="LAN Remote Control Server v1.2")
+    parser.add_argument("--port", type=int, default=CONTROL_PORT)
+    parser.add_argument("--password", type=str, default=None)
+    parser.add_argument("--quality", type=int, default=70)
+    parser.add_argument("--hostname", type=str, default=None)
     args = parser.parse_args()
-
     capture = ScreenCapture(quality=args.quality)
-    w, h = capture.size
-    print(f"[Server] Screen: {w}x{h}, quality={args.quality}")
-
-    # Start UDP discovery
-    discovery = DiscoveryServer(
-        control_port=args.port,
-        hostname=args.hostname,
-        password=args.password,
-    )
+    discovery = DiscoveryServer(control_port=args.port, hostname=args.hostname, password=args.password)
     discovery.start()
-
-    # Start TCP server
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_sock.bind(("0.0.0.0", args.port))
     server_sock.listen(5)
-    print(f"[Server] TCP listening on 0.0.0.0:{args.port}")
-    if args.password:
-        print("[Server] Password protection ENABLED")
-    print("[Server] Ready. Press Ctrl+C to stop.")
-
+    print(f"[Server] v1.2 Ready on TCP 0.0.0.0:{args.port}")
     try:
         while True:
             conn, addr = server_sock.accept()
-            print(f"[Server] New connection from {addr}")
             session = ClientSession(conn, addr, capture, args.password)
             threading.Thread(target=session.start, daemon=True).start()
     except KeyboardInterrupt:
@@ -178,7 +166,6 @@ def main():
         server_sock.close()
         discovery.stop()
         capture.close()
-
 
 if __name__ == "__main__":
     main()
