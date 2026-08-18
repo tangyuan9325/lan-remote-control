@@ -1,14 +1,13 @@
-/// Remote desktop view widget.
-/// Displays JPEG frames and forwards touch gestures as mouse events.
+/// Remote desktop view widget v1.2.
 library;
 
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'connection.dart';
+import 'file_manager_page.dart';
 
 class RemoteView extends StatefulWidget {
   final RemoteConnection connection;
-
   const RemoteView({super.key, required this.connection});
 
   @override
@@ -19,42 +18,55 @@ class _RemoteViewState extends State<RemoteView> {
   Uint8List? _currentFrame;
   String _status = '';
   Offset? _lastTouch;
+  bool _voiceActive = false;
 
   @override
   void initState() {
     super.initState();
     widget.connection.frameStream.listen((frame) {
-      if (mounted) {
-        setState(() => _currentFrame = frame);
-      }
+      if (mounted) setState(() => _currentFrame = frame);
     });
     widget.connection.statusStream.listen((s) {
       if (mounted) setState(() => _status = s);
     });
+    widget.connection.voiceReadyStream.listen((_) {
+      if (mounted) {
+        setState(() => _voiceActive = true);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('语音通话已开启')));
+      }
+    });
+    widget.connection.voiceErrorStream.listen((err) {
+      if (mounted) {
+        setState(() => _voiceActive = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('语音错误: $err')));
+      }
+    });
   }
 
-  /// Convert a local touch position to normalized remote coords (0..1).
+  void _toggleVoice() {
+    if (_voiceActive) {
+      widget.connection.stopVoice();
+      setState(() => _voiceActive = false);
+    } else {
+      widget.connection.startVoice();
+    }
+  }
+
   Offset _toNormalized(Offset local, Size widgetSize) {
     final rw = widget.connection.remoteWidth;
     final rh = widget.connection.remoteHeight;
     if (rw == 0 || rh == 0) return Offset.zero;
-
-    final scale = (widgetSize.width / rw < widgetSize.height / rh)
-        ? widgetSize.width / rw
-        : widgetSize.height / rh;
+    final scale = (widgetSize.width / rw < widgetSize.height / rh) ? widgetSize.width / rw : widgetSize.height / rh;
     final imgW = rw * scale;
     final imgH = rh * scale;
     final offsetX = (widgetSize.width - imgW) / 2;
     final offsetY = (widgetSize.height - imgH) / 2;
-
     final nx = ((local.dx - offsetX) / imgW).clamp(0.0, 1.0);
     final ny = ((local.dy - offsetY) / imgH).clamp(0.0, 1.0);
     return Offset(nx, ny);
   }
 
-  void _send(Map<String, dynamic> event) {
-    widget.connection.sendInput(event);
-  }
+  void _send(Map<String, dynamic> event) { widget.connection.sendInput(event); }
 
   @override
   Widget build(BuildContext context) {
@@ -65,10 +77,17 @@ class _RemoteViewState extends State<RemoteView> {
         backgroundColor: Colors.grey[900],
         actions: [
           IconButton(
-            icon: const Icon(Icons.keyboard),
-            tooltip: 'Keyboard',
-            onPressed: _showKeyboardDialog,
+            icon: const Icon(Icons.folder),
+            tooltip: '文件管理',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FileManagerPage(connection: widget.connection))),
           ),
+          IconButton(
+            icon: Icon(_voiceActive ? Icons.mic : Icons.mic_none),
+            color: _voiceActive ? Colors.red : null,
+            tooltip: '语音通话',
+            onPressed: _toggleVoice,
+          ),
+          IconButton(icon: const Icon(Icons.keyboard), tooltip: 'Keyboard', onPressed: _showKeyboardDialog),
         ],
       ),
       body: GestureDetector(
@@ -85,14 +104,7 @@ class _RemoteViewState extends State<RemoteView> {
           _send({'type': 'mouse_move', 'x': pos.dx, 'y': pos.dy});
         },
         onPanEnd: (details) {
-          if (_lastTouch != null) {
-            _send({
-              'type': 'mouse_up',
-              'x': _lastTouch!.dx,
-              'y': _lastTouch!.dy,
-              'button': 'left'
-            });
-          }
+          if (_lastTouch != null) _send({'type': 'mouse_up', 'x': _lastTouch!.dx, 'y': _lastTouch!.dy, 'button': 'left'});
         },
         onTapUp: (details) {
           final size = context.size ?? Size.zero;
@@ -116,20 +128,12 @@ class _RemoteViewState extends State<RemoteView> {
         },
         child: Center(
           child: _currentFrame != null
-              ? Image.memory(
-                  _currentFrame!,
-                  fit: BoxFit.contain,
-                  gaplessPlayback: true,
-                )
-              : const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(color: Colors.white),
-                    SizedBox(height: 16),
-                    Text('Waiting for screen...',
-                        style: TextStyle(color: Colors.white70)),
-                  ],
-                ),
+              ? Image.memory(_currentFrame!, fit: BoxFit.contain, gaplessPlayback: true)
+              : const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  CircularProgressIndicator(color: Colors.white),
+                  SizedBox(height: 16),
+                  Text('Waiting for screen...', style: TextStyle(color: Colors.white70)),
+                ]),
         ),
       ),
     );
@@ -141,21 +145,12 @@ class _RemoteViewState extends State<RemoteView> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Send Text'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'Type text to send'),
-        ),
+        content: TextField(controller: controller, autofocus: true, decoration: const InputDecoration(hintText: 'Type text to send')),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           TextButton(
             onPressed: () {
-              if (controller.text.isNotEmpty) {
-                _send({'type': 'key_type', 'text': controller.text});
-              }
+              if (controller.text.isNotEmpty) _send({'type': 'key_type', 'text': controller.text});
               Navigator.pop(ctx);
             },
             child: const Text('Send'),
