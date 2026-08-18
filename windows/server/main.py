@@ -86,7 +86,7 @@ class ClientSession:
         if t == "ping":
             send_json(self.conn, {"type": "pong"})
         elif t == "set_quality":
-            self.capture.set_quality(msg.get("quality", 70))
+            self.capture.set_quality(msg.get("quality", 50))
         elif t == "file_list":
             if self.file_mgr: self.file_mgr.list_directory(msg.get("path", ""))
         elif t == "file_download":
@@ -144,10 +144,11 @@ def main():
     parser = argparse.ArgumentParser(description="LAN Remote Control Server v1.2")
     parser.add_argument("--port", type=int, default=CONTROL_PORT)
     parser.add_argument("--password", type=str, default=None)
-    parser.add_argument("--quality", type=int, default=70)
+    parser.add_argument("--quality", type=int, default=50)
+    parser.add_argument("--scale", type=float, default=1.0, help="Screen scale factor (0.5-1.0) for performance")
     parser.add_argument("--hostname", type=str, default=None)
     args = parser.parse_args()
-    capture = ScreenCapture(quality=args.quality)
+    capture = ScreenCapture(quality=args.quality, scale=args.scale)
     discovery = DiscoveryServer(control_port=args.port, hostname=args.hostname, password=args.password)
     discovery.start()
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
