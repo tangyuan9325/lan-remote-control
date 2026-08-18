@@ -3,19 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LAN Remote Control</title>
+<title>LAN Remote Control v1.2</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<!-- Device List View -->
 <div id="deviceView" class="view active">
   <header class="topbar">
     <div class="brand">
       <div class="logo">🖥</div>
       <div>
         <h1>LAN Remote Control</h1>
-        <p class="subtitle">内网远程控制</p>
+        <p class="subtitle">内网远程控制 · v1.2</p>
       </div>
     </div>
     <div class="actions">
@@ -23,16 +21,13 @@
         <input type="checkbox" id="autoRefresh" checked>
         <span>自动刷新</span>
       </label>
-      <button id="refreshBtn" class="btn btn-primary">
-        <span class="icon">↻</span> 刷新
-      </button>
+      <button id="refreshBtn" class="btn btn-primary"><span class="icon">↻</span> 刷新</button>
       <button id="manualBtn" class="btn btn-ghost">手动连接</button>
     </div>
   </header>
-
   <main class="content">
     <div id="deviceList" class="device-grid">
-      <div class="empty-state" id="emptyState">
+      <div class="empty-state">
         <div class="empty-icon">🔍</div>
         <h3>正在搜索内网设备...</h3>
         <p>确保被控端已启动且在同一局域网</p>
@@ -40,8 +35,6 @@
     </div>
   </main>
 </div>
-
-<!-- Remote View -->
 <div id="remoteView" class="view">
   <header class="remote-topbar">
     <button id="backBtn" class="btn btn-ghost btn-sm">← 返回</button>
@@ -50,20 +43,44 @@
       <span id="remoteTitle">连接中...</span>
     </div>
     <div class="actions">
+      <button id="fileBtn" class="btn btn-ghost btn-sm" title="文件管理">📁 文件</button>
+      <button id="voiceBtn" class="btn btn-ghost btn-sm" title="语音通话">🎤 语音</button>
       <button id="keyboardBtn" class="btn btn-ghost btn-sm">⌨ 键盘</button>
       <button id="disconnectBtn" class="btn btn-danger btn-sm">断开</button>
     </div>
   </header>
-  <div class="screen-container" id="screenContainer">
+  <div class="screen-container">
     <img id="screenImage" alt="Remote screen">
     <div id="screenOverlay" class="screen-overlay">
       <div class="spinner"></div>
       <p>等待画面...</p>
     </div>
+    <div id="voiceIndicator" class="voice-indicator hidden">
+      <div class="voice-wave"><span></span><span></span><span></span><span></span></div>
+      <span>语音通话中</span>
+    </div>
   </div>
 </div>
-
-<!-- Manual Connect Modal -->
+<div id="fileModal" class="modal hidden">
+  <div class="modal-content modal-wide">
+    <div class="modal-header">
+      <h3>📁 文件管理</h3>
+      <button class="btn btn-ghost btn-sm" id="fileClose">✕</button>
+    </div>
+    <div class="file-path-bar">
+      <button class="btn btn-ghost btn-sm" id="fileUp">⬆ 上级</button>
+      <span id="filePath" class="file-path">/</span>
+      <button class="btn btn-primary btn-sm" id="uploadBtn">⬆ 上传文件</button>
+    </div>
+    <div class="file-list" id="fileList">
+      <div class="empty-state"><p>加载中...</p></div>
+    </div>
+    <div id="fileProgress" class="file-progress hidden">
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <span id="progressText">0%</span>
+    </div>
+  </div>
+</div>
 <div id="modal" class="modal hidden">
   <div class="modal-content">
     <h3>手动连接</h3>
@@ -85,8 +102,6 @@
     </div>
   </div>
 </div>
-
-<!-- Keyboard Modal -->
 <div id="kbModal" class="modal hidden">
   <div class="modal-content">
     <h3>发送文本</h3>
@@ -99,8 +114,6 @@
     </div>
   </div>
 </div>
-
-<!-- Password Modal -->
 <div id="pwdModal" class="modal hidden">
   <div class="modal-content">
     <h3>需要密码</h3>
@@ -115,7 +128,7 @@
     </div>
   </div>
 </div>
-
+<div id="toast" class="toast hidden"></div>
 <script src="qwebchannel.js"></script>
 <script src="app.js"></script>
 </body>
