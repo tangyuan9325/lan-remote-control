@@ -1,8 +1,4 @@
-# LAN Remote Control Protocol (v1)
-
-## Overview
-A simple binary protocol for intranet remote control. All connections are TCP
-except device discovery, which uses UDP broadcast.
+# LAN Remote Control Protocol (v1.2)
 
 ## Ports
 | Service | Port | Protocol |
@@ -10,93 +6,69 @@ except device discovery, which uses UDP broadcast.
 | Discovery | 9000 | UDP broadcast |
 | Control   | 9001 | TCP         |
 
-## 1. Device Discovery (UDP)
-
-### Client → Server (broadcast, 255.255.255.255:9000)
-```
-DISCOVER
-```
-Plain ASCII text, no trailing newline required.
-
-### Server → Client (unicast reply)
-```json
-{
-  "type": "discovery_response",
-  "hostname": "DESKTOP-ABC123",
-  "ip": "192.168.1.50",
-  "port": 9001,
-  "os": "Windows 11",
-  "version": "1.0.0"
-}
-```
-JSON encoded as UTF-8.
-
-## 2. Control Connection (TCP)
-
-### Message Framing
-Every message on the TCP channel uses a 5-byte header:
-
+## Message Framing (TCP)
+5-byte header + payload:
 | Offset | Size | Field      | Description                              |
 |--------|------|------------|------------------------------------------|
-| 0      | 1    | msg_type   | 0x01 = JSON, 0x02 = JPEG frame           |
-| 1      | 4    | length     | Payload length in bytes (big-endian uint32) |
-| 5      | N    | payload    | Message body                             |
+| 0      | 1    | msg_type   | 0x01=JSON, 0x02=JPEG, 0x03=FileChunk, 0x04=Audio |
+| 1      | 4    | length     | big-endian uint32                        |
+| 5      | N    | payload    | body                                     |
 
-### Handshake
-1. Client connects to server:9001
-2. Client sends JSON:
-   ```json
-   {"type":"hello","password":"optional-password"}
-   ```
-3. Server replies:
-   - Success: `{"type":"hello_ok","width":1920,"height":1080}`
-   - Failure: `{"type":"hello_fail","reason":"wrong_password"}`
+## 1. Device Discovery (UDP 9000)
+Client broadcast: `DISCOVER`
+Server reply: JSON `{"type":"discovery_response","hostname":...,"ip":...,"port":9001,"os":...,"version":"1.2.0","password_required":bool}`
 
-### Screen Streaming
-After handshake the server continuously sends JPEG frames:
-- msg_type = 0x02
-- payload = JPEG bytes
+## 2. Handshake
+Client → `{"type":"hello","password":"..."}`
+Server → `{"type":"hello_ok","width":1920,"height":1080}` or `{"type":"hello_fail","reason":"..."}`
 
-The client may request a quality change:
-```json
-{"type":"set_quality","quality":70}
-```
+## 3. Screen Streaming
+Server sends 0x02 JPEG frames continuously.
+Client may send `{"type":"set_quality","quality":70}`.
 
-### Input Events (Client → Server, JSON)
+## 4. Input Events (Client → Server, JSON)
+- `{"type":"mouse_move","x":0.5,"y":0.3}` (normalized 0..1)
+- `{"type":"mouse_down/up/click/double","button":"left|right|middle","x":..,"y":..}`
+- `{"type":"mouse_scroll","dx":0,"dy":-1}`
+- `{"type":"key_down/up","key":"a"}`
+- `{"type":"key_type","text":"hello"}`
 
-Mouse move (coordinates 0..65535, mapped to full screen):
-```json
-{"type":"mouse_move","x":0.5,"y":0.3}
-```
-x, y are normalized floats (0.0–1.0).
+## 5. File Transfer (v1.2+)
+### List directory
+Client → `{"type":"file_list","path":"C:/Users"}`
+Server → `{"type":"file_list_response","path":"C:/Users","files":[{"name":"Public","is_dir":true,"size":0,"modified":"2024-01-01"}]}`
+Error → `{"type":"file_list_error","path":"...","error":"..."}`
 
-Mouse button:
-```json
-{"type":"mouse_down","button":"left","x":0.5,"y":0.3}
-{"type":"mouse_up","button":"left","x":0.5,"y":0.3}
-{"type":"mouse_click","button":"left","x":0.5,"y":0.3}
-{"type":"mouse_double","button":"left","x":0.5,"y":0.3}
-```
-button: "left" | "right" | "middle"
+### Download file (Server → Client)
+1. Client → `{"type":"file_download","path":"C:/test.txt"}`
+2. Server → `{"type":"file_download_start","name":"test.txt","size":12345}`
+3. Server → multiple 0x03 FileChunk frames (raw bytes)
+4. Server → `{"type":"file_download_complete","name":"test.txt","size":12345}`
+Error → `{"type":"file_download_error","error":"..."}`
 
-Mouse scroll:
-```json
-{"type":"mouse_scroll","dx":0,"dy":-1}
-```
+### Upload file (Client → Server)
+1. Client → `{"type":"file_upload_start","path":"C:/upload/","name":"test.txt","size":12345}`
+2. Server → `{"type":"file_upload_ready","path":"C:/upload/test.txt"}`
+3. Client → multiple 0x03 FileChunk frames (raw bytes)
+4. Client → `{"type":"file_upload_complete","name":"test.txt"}`
+Server → `{"type":"file_upload_done","path":"C:/upload/test.txt","size":12345}`
+Error → `{"type":"file_upload_error","error":"..."}`
 
-Keyboard:
-```json
-{"type":"key_down","key":"a"}
-{"type":"key_up","key":"a"}
-{"type":"key_type","text":"hello"}
-```
+### FileChunk (0x03)
+Raw binary file data. Receiver reassembles chunks in order.
 
-### Keep-alive
-Either side may send:
-```json
-{"type":"ping"}
-```
-Reply:
-```json
-{"type":"pong"}
-```
+## 6. Voice Chat (v1.2+)
+Audio format: PCM 16-bit signed, 16000 Hz, mono.
+
+### Start voice
+Either side → `{"type":"voice_start"}`
+Other side → `{"type":"voice_ready"}`
+
+### Audio frames
+Both sides send 0x04 frames containing raw PCM data.
+
+### Stop voice
+Either side → `{"type":"voice_stop"}`
+
+## 7. Keep-alive
+`{"type":"ping"}` → `{"type":"pong"}`
