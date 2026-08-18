@@ -111,9 +111,8 @@ class _RemoteViewState extends State<RemoteView> {
           final pos = _toNormalized(details.localPosition, size);
           _send({'type': 'mouse_click', 'x': pos.dx, 'y': pos.dy, 'button': 'left'});
         },
-        onDoubleTapUp: (details) {
-          final size = context.size ?? Size.zero;
-          final pos = _toNormalized(details.localPosition, size);
+        onDoubleTap: () {
+          final pos = _lastTouch ?? const Offset(0.5, 0.5);
           _send({'type': 'mouse_double', 'x': pos.dx, 'y': pos.dy, 'button': 'left'});
         },
         onLongPressStart: (details) {
@@ -122,7 +121,6 @@ class _RemoteViewState extends State<RemoteView> {
           _send({'type': 'mouse_down', 'x': pos.dx, 'y': pos.dy, 'button': 'right'});
         },
         onLongPressEnd: (details) {
-          final size = context.size ?? Size.zero;
           final pos = _lastTouch ?? Offset.zero;
           _send({'type': 'mouse_up', 'x': pos.dx, 'y': pos.dy, 'button': 'right'});
         },
