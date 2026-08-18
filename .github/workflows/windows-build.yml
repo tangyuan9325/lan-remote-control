@@ -1,0 +1,61 @@
+name: Windows Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.2.0)'
+        required: true
+        default: 'v1.2.0'
+  push:
+    branches:
+      - main
+    paths:
+      - 'windows/**'
+      - '.github/workflows/windows-build.yml'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Build Server (controlled side)
+        run: |
+          cd windows/server
+          pip install -r requirements.txt pyinstaller
+          pyinstaller --onefile --name RemoteControl-Server --clean main.py
+
+      - name: Build Viewer (PyQt5 WebView)
+        run: |
+          cd windows/viewer_pyqt
+          pip install -r requirements.txt pyinstaller
+          pyinstaller --onefile --windowed --name RemoteControl-Viewer --clean --add-data "web;web" main.py
+
+      - name: Package artifacts
+        run: |
+          mkdir -p build
+          copy windows\server\dist\RemoteControl-Server.exe build\lan-remote-control-${{ github.event.inputs.version || 'v1.2.0' }}-windows-server.exe
+          copy windows\viewer_pyqt\dist\RemoteControl-Viewer.exe build\lan-remote-control-${{ github.event.inputs.version || 'v1.2.0' }}-windows-viewer.exe
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-executables
+          path: build/*.exe
+          retention-days: 30
+
+      - name: Commit EXE to build folder
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add build/*.exe
+          git commit -m "chore: add Windows executables ${{ github.event.inputs.version || 'v1.2.0' }}" || echo "No changes to commit"
+          git push || echo "Push skipped (may need rebase)"
