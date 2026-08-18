@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: stable
+
+      - name: Build APK
+        run: |
+          cd android/remote_control_app
+          flutter pub get
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk ../../lan-remote-control-android.apk
+
+      - name: Build Windows Server (Linux binary)
+        run: |
+          pip install pyinstaller mss Pillow pynput
+          cd windows/server
+          pyinstaller --onefile --name RemoteControl-Server main.py || echo "PyInstaller build may fail on Linux for Windows"
+          ls dist/ 2>/dev/null || echo "No dist"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## LAN Remote Control ${{ github.ref_name }}
+
+            ### New Features (v1.2.0)
+            - 📁 File transfer: browse, download, upload remote files
+            - 🎤 Voice chat: PCM 16kHz real-time bidirectional audio
+            - 🪟 PyQt5 WebView modern UI for Windows viewer
+            - 📱 Android file manager and voice chat UI
+
+            ### Assets
+            - `lan-remote-control-android.apk` - Android client APK
+          files: |
+            lan-remote-control-android.apk
+          draft: false
+          prerelease: false
