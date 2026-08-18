@@ -56,6 +56,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add build/*.exe
+          git add -f build/*.exe
           git commit -m "chore: add Windows executables ${{ github.event.inputs.version || 'v1.2.0' }}" || echo "No changes to commit"
           git push || echo "Push skipped (may need rebase)"

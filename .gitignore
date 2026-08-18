@@ -2,7 +2,6 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
 # Distribution / packaging
 .Python
 build/
@@ -20,23 +19,19 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
 # Virtual environments
 venv/
 env/
 ENV/
 .venv/
-
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
 # OS
 .DS_Store
 Thumbs.db
-
 # Flutter / Dart
 .dart_tool/
 .packages
@@ -44,16 +39,18 @@ Thumbs.db
 .pub/
 build/
 *.log
-
 # Android
 android/remote_control_app/.gradle/
 android/remote_control_app/local.properties
 android/remote_control_app/**/android/key.properties
 *.jks
 *.keystore
-
 # Release artifacts
 release/
 *.exe
 *.apk
 *.aab
+# Keep pre-built artifacts in build/
+!build/
+!build/*.apk
+!build/*.exe
