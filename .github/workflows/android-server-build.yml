@@ -1,0 +1,90 @@
+name: Android Server Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.2.0)'
+        required: true
+        default: 'v1.2.0'
+  push:
+    branches:
+      - main
+    paths:
+      - 'android/remote_control_server/**'
+      - '.github/workflows/android-server-build.yml'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: |
+          cd android/remote_control_server
+          flutter pub get
+
+      - name: Build APK
+        run: |
+          cd android/remote_control_server
+          flutter build apk --release
+
+      - name: Rename APK
+        run: |
+          mkdir -p build
+          cp android/remote_control_server/build/app/outputs/flutter-apk/app-release.apk build/lan-remote-control-v1.2.0-android-server.apk
+          ls -la build/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-server-apk
+          path: build/lan-remote-control-v1.2.0-android-server.apk
+          retention-days: 30
+
+  release:
+    needs: build-android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-server-apk
+          path: dist/
+
+      - name: Verify files
+        run: |
+          ls -la dist/
+
+      - name: Update Release with Android Server APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.2.0
+          name: LAN Remote Control v1.2.0
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.apk
+          append_body: true
+          body: |
+            ### Android Server (controlled side)
+            - `lan-remote-control-v1.2.0-android-server.apk` — Android被控端（屏幕共享+远程触控）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
