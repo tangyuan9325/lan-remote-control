@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LAN Remote Control</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Device List View -->
+<div id="deviceView" class="view active">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">🖥</div>
+      <div>
+        <h1>LAN Remote Control</h1>
+        <p class="subtitle">内网远程控制</p>
+      </div>
+    </div>
+    <div class="actions">
+      <label class="switch">
+        <input type="checkbox" id="autoRefresh" checked>
+        <span>自动刷新</span>
+      </label>
+      <button id="refreshBtn" class="btn btn-primary">
+        <span class="icon">↻</span> 刷新
+      </button>
+      <button id="manualBtn" class="btn btn-ghost">手动连接</button>
+    </div>
+  </header>
+
+  <main class="content">
+    <div id="deviceList" class="device-grid">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">🔍</div>
+        <h3>正在搜索内网设备...</h3>
+        <p>确保被控端已启动且在同一局域网</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Remote View -->
+<div id="remoteView" class="view">
+  <header class="remote-topbar">
+    <button id="backBtn" class="btn btn-ghost btn-sm">← 返回</button>
+    <div class="remote-info">
+      <span id="remoteStatus" class="status-dot connecting"></span>
+      <span id="remoteTitle">连接中...</span>
+    </div>
+    <div class="actions">
+      <button id="keyboardBtn" class="btn btn-ghost btn-sm">⌨ 键盘</button>
+      <button id="disconnectBtn" class="btn btn-danger btn-sm">断开</button>
+    </div>
+  </header>
+  <div class="screen-container" id="screenContainer">
+    <img id="screenImage" alt="Remote screen">
+    <div id="screenOverlay" class="screen-overlay">
+      <div class="spinner"></div>
+      <p>等待画面...</p>
+    </div>
+  </div>
+</div>
+
+<!-- Manual Connect Modal -->
+<div id="modal" class="modal hidden">
+  <div class="modal-content">
+    <h3>手动连接</h3>
+    <div class="form-group">
+      <label>IP 地址</label>
+      <input type="text" id="ipInput" placeholder="192.168.1.50">
+    </div>
+    <div class="form-group">
+      <label>端口</label>
+      <input type="number" id="portInput" value="9001">
+    </div>
+    <div class="form-group">
+      <label>密码（可选）</label>
+      <input type="password" id="pwdInput" placeholder="无密码留空">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="modalCancel">取消</button>
+      <button class="btn btn-primary" id="modalConnect">连接</button>
+    </div>
+  </div>
+</div>
+
+<!-- Keyboard Modal -->
+<div id="kbModal" class="modal hidden">
+  <div class="modal-content">
+    <h3>发送文本</h3>
+    <div class="form-group">
+      <textarea id="kbInput" rows="3" placeholder="输入要发送的文本..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="kbCancel">取消</button>
+      <button class="btn btn-primary" id="kbSend">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- Password Modal -->
+<div id="pwdModal" class="modal hidden">
+  <div class="modal-content">
+    <h3>需要密码</h3>
+    <p id="pwdDeviceName" class="muted"></p>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="pwdModalInput" placeholder="输入连接密码">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="pwdCancel">取消</button>
+      <button class="btn btn-primary" id="pwdConfirm">连接</button>
+    </div>
+  </div>
+</div>
+
+<script src="qwebchannel.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
