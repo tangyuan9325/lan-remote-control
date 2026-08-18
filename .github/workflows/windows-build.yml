@@ -51,36 +51,50 @@ jobs:
           path: build/*.exe
           retention-days: 30
 
-  commit-exe:
+  release:
     needs: build-windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download EXE artifacts
         uses: actions/download-artifact@v4
         with:
           name: windows-executables
-          path: build/
+          path: dist/
 
       - name: Verify files
         run: |
-          ls -la build/
-          file build/*.exe 2>/dev/null || echo "Binary files"
+          ls -la dist/
 
-      - name: Commit EXE to build folder
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.2.0
+          name: LAN Remote Control v1.2.0
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.exe
+          body: |
+            ## LAN Remote Control v1.2.0
+
+            ### Windows Client
+            - `lan-remote-control-v1.2.0-windows-server.exe` — 被控端（运行在被控制的电脑上）
+            - `lan-remote-control-v1.2.0-windows-viewer.exe` — 控制端（PyQt5 WebView界面）
+
+            ### Features
+            - 屏幕实时传输
+            - 鼠标键盘远程控制
+            - 文件传输
+            - 语音通话
+            - 内网自动发现
+
+            ### Usage
+            1. 在被控制的Windows电脑上运行 server.exe
+            2. 在控制端运行 viewer.exe 或安装Android APK
+            3. 确保设备在同一局域网内
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
-          git pull --rebase origin main || true
-          git add -f build/*.exe
-          git status
-          git commit -m "chore: add Windows executables v1.2.0" || echo "No changes to commit"
-          git push origin main
