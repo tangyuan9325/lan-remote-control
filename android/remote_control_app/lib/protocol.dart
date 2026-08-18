@@ -1,8 +1,4 @@
-/// Wire protocol constants and helpers for the Flutter viewer.
-///
-/// Message framing (5-byte header + payload):
-///   byte 0      : msgType  (0x01=JSON, 0x02=JPEG)
-///   bytes 1..4  : length   (big-endian uint32)
+/// Wire protocol constants and helpers for the Flutter viewer v1.2.
 library;
 
 import 'dart:convert';
@@ -11,9 +7,10 @@ import 'dart:typed_data';
 class Protocol {
   static const int msgJson = 0x01;
   static const int msgJpeg = 0x02;
+  static const int msgFile = 0x03;
+  static const int msgAudio = 0x04;
   static const int headerSize = 5;
 
-  /// Build a framed JSON message.
   static Uint8List packJson(Map<String, dynamic> obj) {
     final payload = utf8.encode(jsonEncode(obj));
     final bytes = BytesBuilder()
@@ -23,13 +20,20 @@ class Protocol {
     return bytes.toBytes();
   }
 
+  static Uint8List packFile(Uint8List data) {
+    final bytes = BytesBuilder()
+      ..addByte(msgFile)
+      ..add(_uint32Be(data.length))
+      ..add(data);
+    return bytes.toBytes();
+  }
+
   static Uint8List _uint32Be(int value) {
     final data = ByteData(4)..setUint32(0, value, Endian.big);
     return data.buffer.asUint8List();
   }
 }
 
-/// Parsed discovery response.
 class DeviceInfo {
   final String hostname;
   final String ip;
@@ -55,6 +59,29 @@ class DeviceInfo {
       os: json['os'] ?? '',
       version: json['version'] ?? '',
       passwordRequired: json['password_required'] ?? false,
+    );
+  }
+}
+
+class FileEntry {
+  final String name;
+  final bool isDir;
+  final int size;
+  final String modified;
+
+  FileEntry({
+    required this.name,
+    required this.isDir,
+    required this.size,
+    required this.modified,
+  });
+
+  factory FileEntry.fromJson(Map<String, dynamic> json) {
+    return FileEntry(
+      name: json['name'] ?? '',
+      isDir: json['is_dir'] ?? false,
+      size: json['size'] ?? 0,
+      modified: json['modified'] ?? '',
     );
   }
 }
