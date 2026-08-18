@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">远程控制被控端</string>
+    <string name="accessibility_description">允许远程控制服务模拟触摸和按键操作，用于远程控制本设备。</string>
+</resources>
