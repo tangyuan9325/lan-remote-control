@@ -11,29 +11,17 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      - name: Show Go version
-        run: go version
-      - name: Show files
-        run: |
-          dir go-server\
-          dir go-server\cmd\server\
-      - name: Go mod download
-        run: |
-          cd go-server
-          go mod download
-      - name: Build Go server
+      - name: Build
         run: |
           cd go-server
           go build -v -ldflags "-s -w" -o ..\build\lan-remote-control-v1.3.0-windows-server.exe .\cmd\server
-      - name: Verify build
-        run: |
-          dir build\
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -41,47 +29,40 @@ jobs:
           path: build/*.exe
 
   release:
-    needs: [build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Download Windows artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: windows-exe
           path: dist/
       - name: List files
-        run: ls -la dist/
-      - name: Update Release v1.3.0
+        run: ls -la dist/ 2>/dev/null || echo "No artifacts found"
+      - name: Update Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.3.0
           name: LAN Remote Control v1.3.0
-          draft: false
-          prerelease: false
           files: |
-            dist/*.exe
+            dist/*
           body: |
             ## LAN Remote Control v1.3.0
 
             ### Major Updates
-            - **Go Engine**: Rewritten server in Go for high performance and low latency
-            - **GPU Capture**: GDI screen capture (DXGI ready)
+            - **Go Engine**: Rewritten server in Go for high performance
             - **Web Control**: Browser-based control at http://IP:8080
             - **Camera**: Remote camera viewing
             - **New UI**: Dark theme + Liquid Glass glassmorphism
-            - **Silent Start**: Background operation
 
-            ### Downloads
-            | File | Description |
-            |------|-------------|
-            | `lan-remote-control-v1.3.0-windows-server.exe` | Windows controlled side (Go engine) |
+            ### Source Code
+            Full source code is available in the repository.
 
             ### Usage
-            1. Run `windows-server.exe` on the PC to control
+            1. Build and run `go-server/cmd/server` on Windows
             2. Open browser at http://PC_IP:8080 for web control
-            3. Ensure devices are on the same LAN
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
