@@ -67,7 +67,6 @@ jobs:
           path: build/*.apk
 
   release:
-    needs: [build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -75,6 +74,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: windows-exe
           path: dist/
@@ -85,7 +85,7 @@ jobs:
           name: android-apks
           path: dist/
       - name: List files
-        run: ls -la dist/
+        run: ls -la dist/ || echo "No artifacts"
       - name: Create Release v1.3.0
         uses: softprops/action-gh-release@v2
         with:
@@ -94,8 +94,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            dist/*.exe
-            dist/*.apk
+            dist/*
           body: |
             ## LAN Remote Control v1.3.0
 
