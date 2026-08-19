@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LAN Remote Control v1.3</title>
+<style>
+:root{--bg-primary:#0a0a0c;--bg-glass:rgba(30,30,35,0.65);--bg-glass-hover:rgba(45,45,52,0.75);--border-glass:rgba(255,255,255,0.08);--text-primary:#e8e8ea;--text-secondary:#9a9aa0;--text-muted:#6a6a72;--accent:#4a9eff;--accent-glow:rgba(74,158,255,0.3);--danger:#ff5a5a;--success:#4ade80;--radius:14px;--radius-sm:8px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;background:var(--bg-primary);color:var(--text-primary);min-height:100vh;overflow:hidden}
+body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 20% 30%,rgba(74,158,255,0.08) 0%,transparent 40%),radial-gradient(circle at 80% 70%,rgba(139,92,246,0.06) 0%,transparent 40%),radial-gradient(circle at 50% 50%,rgba(30,30,35,1) 0%,var(--bg-primary) 100%);z-index:-1}
+.app{display:flex;height:100vh;padding:16px;gap:16px}
+.glass{background:var(--bg-glass);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+.sidebar{width:280px;display:flex;flex-direction:column;padding:20px;gap:16px}
+.logo{display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--border-glass)}
+.logo-icon{width:40px;height:40px;background:linear-gradient(135deg,var(--accent),#8b5cf6);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 4px 12px var(--accent-glow)}
+.logo-text h1{font-size:15px;font-weight:600}
+.logo-text span{font-size:11px;color:var(--text-muted)}
+.section-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin-bottom:8px}
+.device-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.device-item{padding:12px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.03);border:1px solid transparent;cursor:pointer;transition:all 0.2s}
+.device-item:hover{background:var(--bg-glass-hover);border-color:var(--border-glass)}
+.device-item.active{background:rgba(74,158,255,0.1);border-color:var(--accent)}
+.device-name{font-size:13px;font-weight:500;margin-bottom:4px}
+.device-info{font-size:11px;color:var(--text-muted)}
+.device-status{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px}
+.device-status.online{background:var(--success);box-shadow:0 0 6px var(--success)}
+.main{flex:1;display:flex;flex-direction:column;gap:16px}
+.topbar{padding:12px 20px;display:flex;align-items:center;justify-content:space-between}
+.conn-status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary)}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--text-muted);transition:all 0.3s}
+.conn-dot.connected{background:var(--success);box-shadow:0 0 8px var(--success)}
+.topbar-right{display:flex;gap:8px}
+.btn{padding:8px 16px;border-radius:var(--radius-sm);border:1px solid var(--border-glass);background:rgba(255,255,255,0.05);color:var(--text-primary);font-size:12px;cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:6px}
+.btn:hover{background:var(--bg-glass-hover);border-color:rgba(255,255,255,0.15)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:white}
+.btn.primary:hover{background:#3a8eef;box-shadow:0 4px 12px var(--accent-glow)}
+.btn.danger{background:rgba(255,90,90,0.15);border-color:rgba(255,90,90,0.3);color:var(--danger)}
+.screen-container{flex:1;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.screen-wrapper{position:relative;max-width:100%;max-height:100%}
+#screen{max-width:100%;max-height:calc(100vh - 200px);border-radius:var(--radius-sm);display:block;cursor:crosshair}
+.screen-overlay{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:rgba(10,10,12,0.8);backdrop-filter:blur(10px);border-radius:var(--radius-sm)}
+.overlay-content{text-align:center}
+.overlay-content h2{font-size:18px;margin-bottom:8px}
+.overlay-content p{font-size:13px;color:var(--text-muted);margin-bottom:20px}
+.control-bar{padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.quality-slider{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary)}
+.quality-slider input[type=range]{width:100px;accent-color:var(--accent)}
+.fps-display{font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:100}
+.modal-overlay.show{display:flex}
+.modal{width:640px;max-width:90vw;padding:20px}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.modal-header h3{font-size:16px}
+.modal-close{background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer}
+#camera-feed{width:100%;border-radius:var(--radius-sm);background:#000}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:3px}
+.spinner{width:32px;height:32px;border:3px solid rgba(255,255,255,0.1);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="app">
+<div class="sidebar glass">
+<div class="logo"><div class="logo-icon">&#x1F5A5;</div><div class="logo-text"><h1>LAN Remote</h1><span>v1.3.0 &middot; Go Engine</span></div></div>
+<div><div class="section-title">Device List</div><div class="device-list" id="device-list"><div class="device-item" style="text-align:center;color:var(--text-muted);padding:20px;">Searching...</div></div></div>
+<div style="margin-top:auto"><button class="btn" style="width:100%;justify-content:center;" onclick="refreshDevices()">&#x1F504; Refresh</button></div>
+</div>
+<div class="main">
+<div class="topbar glass"><div class="conn-status"><div class="conn-dot" id="conn-dot"></div><span id="conn-text">Disconnected</span></div><div class="topbar-right"><button class="btn" onclick="toggleCamera()">&#x1F4F7; Camera</button><button class="btn danger" onclick="disconnect()">Disconnect</button></div></div>
+<div class="screen-container glass"><div class="screen-wrapper"><img id="screen" style="display:none;"><div class="screen-overlay" id="screen-overlay"><div class="overlay-content"><div class="spinner" id="loading-spinner"></div><h2 id="overlay-title">Waiting</h2><p id="overlay-desc">Select a device to start</p><button class="btn primary" onclick="refreshDevices()" style="margin:0 auto;">Search</button></div></div></div></div>
+<div class="control-bar glass"><div class="quality-slider"><span>Quality</span><input type="range" id="quality" min="20" max="100" value="50" onchange="setQuality(this.value)"><span id="quality-val">50</span></div><div class="fps-display" id="fps-display">FPS: --</div></div>
+</div>
+</div>
+<div class="modal-overlay" id="camera-modal"><div class="modal glass"><div class="modal-header"><h3>Camera</h3><button class="modal-close" onclick="toggleCamera()">&#x2715;</button></div><img id="camera-feed" alt="Camera"></div></div>
+<script>
+let ws=null,currentDevice=null,frameCount=0,lastFpsTime=Date.now(),cameraWs=null;
+async function refreshDevices(){const list=document.getElementById('device-list');list.innerHTML='<div class="device-item" style="text-align:center;color:var(--text-muted);padding:20px;">Searching...</div>';try{const resp=await fetch('/api/devices');const devices=await resp.json();if(devices.length===0){list.innerHTML='<div class="device-item" style="text-align:center;color:var(--text-muted);padding:20px;">No devices</div>';return}list.innerHTML=devices.map(d=>'<div class="device-item '+(currentDevice&&currentDevice.ip===d.ip?'active':'')+'" onclick="connectDevice(\''+d.ip+'\','+d.port+')"><div class="device-name"><span class="device-status online"></span>'+d.hostname+'</div><div class="device-info">'+d.ip+':'+d.port+' &middot; '+d.os+'</div></div>').join('')}catch(e){list.innerHTML='<div class="device-item" style="text-align:center;color:var(--text-muted);padding:20px;">Failed</div>'}}
+function connectDevice(ip,port){if(ws)ws.close();currentDevice={ip,port};document.getElementById('overlay-title').textContent='Connecting...';document.getElementById('overlay-desc').textContent='Connecting to '+ip+':'+port;document.getElementById('screen-overlay').style.display='flex';document.getElementById('loading-spinner').style.display='block';const proto=location.protocol==='https:'?'wss:':'ws:';ws=new WebSocket(proto+'//'+location.host+'/ws?ip='+ip+'&port='+port);ws.binaryType='arraybuffer';ws.onopen=()=>{document.getElementById('conn-dot').classList.add('connected');document.getElementById('conn-text').textContent='Connected '+ip;document.getElementById('screen-overlay').style.display='none';document.getElementById('screen').style.display='block';refreshDevices()};ws.onmessage=e=>{if(e.data instanceof ArrayBuffer){const blob=new Blob([e.data],{type:'image/jpeg'});const url=URL.createObjectURL(blob);const img=document.getElementById('screen');img.onload=()=>URL.revokeObjectURL(url);img.src=url;frameCount++;const now=Date.now();if(now-lastFpsTime>=1000){document.getElementById('fps-display').textContent='FPS: '+frameCount;frameCount=0;lastFpsTime=now}}};ws.onclose=()=>{document.getElementById('conn-dot').classList.remove('connected');document.getElementById('conn-text').textContent='Disconnected';document.getElementById('screen-overlay').style.display='flex';document.getElementById('overlay-title').textContent='Disconnected';document.getElementById('overlay-desc').textContent='Select a device to reconnect';document.getElementById('screen').style.display='none';currentDevice=null;refreshDevices()};ws.onerror=()=>{document.getElementById('overlay-title').textContent='Failed';document.getElementById('overlay-desc').textContent='Cannot connect'}}
+function disconnect(){if(ws)ws.close()}
+function setQuality(val){document.getElementById('quality-val').textContent=val;if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'set_quality',quality:parseInt(val)}))}
+const screen=document.getElementById('screen');
+screen.addEventListener('mousedown',e=>{const r=screen.getBoundingClientRect();if(ws)ws.send(JSON.stringify({type:'mouse_down',x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height,button:'left'}))});
+screen.addEventListener('mouseup',e=>{const r=screen.getBoundingClientRect();if(ws)ws.send(JSON.stringify({type:'mouse_up',x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height,button:'left'}))});
+screen.addEventListener('mousemove',e=>{const r=screen.getBoundingClientRect();if(ws)ws.send(JSON.stringify({type:'mouse_move',x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height}))});
+screen.addEventListener('wheel',e=>{e.preventDefault();const r=screen.getBoundingClientRect();if(ws)ws.send(JSON.stringify({type:'mouse_scroll',dx:0,dy:e.deltaY>0?1:-1}))});
+document.addEventListener('keydown',e=>{if(ws&&ws.readyState===WebSocket.OPEN&&document.activeElement===document.body)ws.send(JSON.stringify({type:'key_down',key:e.key}))});
+document.addEventListener('keyup',e=>{if(ws&&ws.readyState===WebSocket.OPEN&&document.activeElement===document.body)ws.send(JSON.stringify({type:'key_up',key:e.key}))});
+function toggleCamera(){const modal=document.getElementById('camera-modal');if(modal.classList.contains('show')){modal.classList.remove('show');if(cameraWs)cameraWs.close()}else{modal.classList.add('show');const proto=location.protocol==='https:'?'wss:'='ws:';cameraWs=new WebSocket(proto+'//'+location.host+'/camera');cameraWs.binaryType='arraybuffer';cameraWs.onmessage=e=>{if(e.data instanceof ArrayBuffer){const blob=new Blob([e.data],{type:'image/jpeg'});const url=URL.createObjectURL(blob);const img=document.getElementById('camera-feed');img.onload=()=>URL.revokeObjectURL(url);img.src=url}}}}
+setInterval(refreshDevices,10000);refreshDevices();
+</script>
+</body>
+</html>
