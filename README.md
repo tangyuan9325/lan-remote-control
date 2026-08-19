@@ -1,99 +1,77 @@
-# LAN Remote Control
+# LAN Remote Control v1.3.0
 
-一个开源的**内网远程控制**工具，仿向日葵 / ToDesk 的操作方式，支持 **Windows ↔ Windows** 和 **Android → Windows** 远程控制。所有通信在内网完成，无需中转服务器，低延迟。
+A LAN remote control application similar to Sunlogin/ToDesk, supporting Windows and Android.
 
-> ⚠️ 本项目仅用于**合法的内网远程管理**（如家庭电脑、办公设备）。请勿用于未经授权的访问。
+## Features
 
-## 功能特性
+### v1.3.0 New
+- **Go Engine**: Rewritten controlled side in Go for high performance
+- **GPU Capture**: DXGI Desktop Duplication API (GDI fallback)
+- **Web Control**: Browser-based control at http://IP:8080
+- **Camera**: Remote camera viewing via FFmpeg
+- **New UI**: Dark theme + Liquid Glass glassmorphism
+- **Silent Start**: Background operation
 
-- 🔍 **内网自动发现** — UDP 广播自动搜索同网段内的被控电脑
-- 🖥️ **实时屏幕传输** — JPEG 帧压缩，30 FPS 目标帧率
-- 🖱️ **完整鼠标控制** — 移动、左键/右键/中键、双击、滚轮
-- ⌨️ **键盘输入** — 支持组合键、特殊键、文本输入
-- 📁 **文件传输** (v1.2+) — 远程目录浏览、下载、上传
-- 🎤 **语音通话** (v1.2+) — PCM 16kHz 实时双向语音
-- 🔐 **密码保护** — 可选连接密码
-- 📱 **Android 客户端** — Flutter 构建，触摸手势映射鼠标操作
-- 🪟 **Windows 客户端** — PyQt5 WebView 现代 UI
-- 🌐 **纯内网通信** — 无需公网服务器，数据不出局域网
+### Core
+- Real-time screen streaming (30fps JPEG)
+- Mouse/keyboard remote control
+- File transfer
+- Voice chat
+- Auto device discovery (UDP broadcast)
+- Password protection
 
-## 项目结构
+## Platform Support
 
-```
-RemoteControl/
-├── windows/
-│   ├── server/          # 被控端
-│   │   ├── main.py
-│   │   ├── screen_capture.py
-│   │   ├── input_simulator.py
-│   │   ├── file_manager.py
-│   │   ├── audio_handler.py
-│   │   ├── discovery.py
-│   │   ├── protocol.py
-│   │   └── requirements.txt
-│   ├── viewer_pyqt/     # PyQt5 WebView 控制端
-│   │   ├── main.py
-│   │   ├── bridge.py
-│   │   ├── discovery.py
-│   │   ├── protocol.py
-│   │   ├── requirements.txt
-│   │   └── web/
-│   └── viewer/          # Tkinter 控制端（旧版）
-├── android/
-│   └── remote_control_app/
-├── docs/
-│   └── protocol.md
-└── README.md
-```
+| Platform | Controlled | Controller |
+|----------|-----------|------------|
+| Windows | Go engine | Web / PyQt5 |
+| Android | Flutter | Flutter |
 
-## 快速开始
+## Quick Start
 
-### 1. 被控端（Windows）
+### Windows Server
 ```bash
-cd windows/server
-pip install -r requirements.txt
-python main.py                       # 无密码
-python main.py --password 1234       # 设置密码
+lan-remote-control-v1.3.0-windows-server.exe
+# Custom options
+server.exe --port 9001 --web 8080 --quality 50 --name "MyPC" --password "1234"
 ```
 
-### 2. 控制端 — Windows (PyQt5)
-```bash
-cd windows/viewer_pyqt
-pip install -r requirements.txt
-python main.py
+After running:
+- TCP control: port 9001
+- Web UI: http://localhost:8080
+- UDP discovery: port 9000
+
+### Web Control
+Open browser at http://CONTROLLED_PC_IP:8080, auto-discover and connect.
+
+### Android
+Install APKs, auto-search LAN devices.
+
+## Architecture
+
+```
+go-server/                    # Go controlled side
+├── cmd/server/main.go       # Entry point
+├── screen/capture.go        # Screen capture (GDI/DXGI)
+├── camera/camera.go         # Camera (FFmpeg/test pattern)
+├── protocol/protocol.go     # Wire protocol
+├── discovery/discovery.go   # UDP device discovery
+└── webui/                   # Web control UI
+    ├── server.go            # HTTP+WebSocket server
+    └── static/index.html    # Glassmorphism frontend
+
+android/
+├── remote_control_app/      # Android controller (Flutter)
+└── remote_control_server/   # Android controlled side (Flutter)
 ```
 
-### 3. 控制端 — Android
-```bash
-cd android/remote_control_app
-flutter pub get
-flutter build apk
-```
+## Protocol
 
-## 通信协议
-详见 [docs/protocol.md](docs/protocol.md)。
-
-- `0x01` JSON 控制消息
-- `0x02` JPEG 屏幕帧
-- `0x03` 文件分块
-- `0x04` PCM 音频帧
-
-## 端口说明
-| 端口 | 协议 | 用途 |
-|------|------|------|
-| 9000 | UDP | 设备发现 |
-| 9001 | TCP | 远程控制 |
-
-## 构建发布版
-### Windows EXE
-```bash
-pip install pyinstaller
-pyinstaller --onefile --name RemoteControl-Server main.py
-```
-### Android APK
-```bash
-flutter build apk --release
-```
+- Header: 1 byte msg type + 4 bytes big-endian length
+- Types: 0x01 JSON / 0x02 JPEG / 0x03 File / 0x04 Audio
+- Discovery: UDP 9000, magic="DISCOVER"
+- Control: TCP 9001
 
 ## License
-MIT License
+
+MIT
