@@ -18,13 +18,22 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      - name: Build Go server
+      - name: Go mod tidy
         run: |
           cd go-server
           go mod tidy
-          go build -ldflags "-H windowsgui -s -w" -o ../build/lan-remote-control-v1.3.0-windows-server.exe ./cmd/server
+      - name: Go vet
+        run: |
+          cd go-server
+          go vet ./...
+      - name: Build Go server
+        run: |
+          cd go-server
+          mkdir -p ../build
+          go build -ldflags "-s -w" -o ../build/lan-remote-control-v1.3.0-windows-server.exe ./cmd/server
       - name: Verify build
-        run: dir build\
+        run: |
+          dir build\
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
