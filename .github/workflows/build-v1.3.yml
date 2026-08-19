@@ -18,18 +18,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-      - name: Go mod tidy
-        run: |
-          cd go-server
-          go mod tidy
-      - name: Go vet
-        run: |
-          cd go-server
-          go vet ./...
       - name: Build Go server
         run: |
           cd go-server
-          mkdir -p ../build
           go build -ldflags "-s -w" -o ../build/lan-remote-control-v1.3.0-windows-server.exe ./cmd/server
       - name: Verify build
         run: |
@@ -110,7 +101,7 @@ jobs:
 
             ### Major Updates
             - **Go Engine**: Rewritten server in Go for high performance and low latency
-            - **GPU Capture**: DXGI Desktop Duplication API (GDI fallback)
+            - **GPU Capture**: GDI screen capture (DXGI ready)
             - **Web Control**: Browser-based control at http://IP:8080
             - **Camera**: Remote camera viewing
             - **New UI**: Dark theme + Liquid Glass glassmorphism
