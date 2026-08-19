@@ -33,6 +33,7 @@ jobs:
 
   build-android:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDK 17
@@ -50,12 +51,14 @@ jobs:
           cd android/remote_control_app
           flutter pub get
           flutter build apk --release --no-shrink
+          mkdir -p ../../build
           cp build/app/outputs/flutter-apk/app-release.apk ../../build/lan-remote-control-v1.3.0-android-controller.apk
       - name: Build server APK
         run: |
           cd android/remote_control_server
           flutter pub get
           flutter build apk --release --no-shrink
+          mkdir -p ../../build
           cp build/app/outputs/flutter-apk/app-release.apk ../../build/lan-remote-control-v1.3.0-android-server.apk
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -64,7 +67,7 @@ jobs:
           path: build/*.apk
 
   release:
-    needs: [build-windows, build-android]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -75,8 +78,9 @@ jobs:
         with:
           name: windows-exe
           path: dist/
-      - name: Download Android artifacts
+      - name: Download Android artifacts (if available)
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: android-apks
           path: dist/
@@ -101,7 +105,7 @@ jobs:
             - **Web Control**: Browser-based control at http://IP:8080
             - **Camera**: Remote camera viewing
             - **New UI**: Dark theme + Liquid Glass glassmorphism
-            - **Silent Start**: Background operation with system tray
+            - **Silent Start**: Background operation
 
             ### Downloads
             | File | Description |
