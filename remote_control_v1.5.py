@@ -26,6 +26,43 @@ from functools import wraps
 app = Flask(__name__)
 pyautogui.FAILSAFE = False
 
+# ===== 安全加固 =====
+# 认证密码：优先从环境变量读取，未设置时生成随机密码并打印
+import secrets as _secrets
+AUTH_TOKEN = os.environ.get("REMOTE_CONTROL_PASSWORD", "")
+if not AUTH_TOKEN:
+    AUTH_TOKEN = _secrets.token_urlsafe(16)
+    print(f"[安全] 未设置 REMOTE_CONTROL_PASSWORD，已生成随机密码: {AUTH_TOKEN}")
+    print(f"[安全] 请在请求头中携带 X-Auth-Token: {AUTH_TOKEN}")
+
+# 上传目录的真实路径（用于路径遍历防护）
+UPLOAD_REAL_DIR = os.path.realpath(Config.upload_dir)
+
+def safe_join(base_dir, user_path):
+    """安全拼接路径，防止路径遍历攻击。返回 None 表示路径越界。"""
+    if not user_path:
+        return None
+    # 拒绝空字节和绝对路径
+    if "\x00" in user_path:
+        return None
+    # 规范化路径
+    candidate = os.path.realpath(os.path.join(base_dir, user_path))
+    # 验证路径在允许目录内
+    if not (candidate == base_dir or candidate.startswith(base_dir + os.sep)):
+        return None
+    return candidate
+
+@app.before_request
+def require_auth():
+    """全局认证中间件：所有请求必须携带正确的 X-Auth-Token。"""
+    # 预检请求放行
+    if request.method == "OPTIONS":
+        return None
+    token = request.headers.get("X-Auth-Token", "")
+    if not token or token != AUTH_TOKEN:
+        return jsonify({"status": "error", "message": "未授权或密码错误"}), 401
+    return None
+
 # 线程安全的全局变量
 screen_thread = None
 flask_thread = None
@@ -561,11 +598,14 @@ HTML_TEMPLATE = '''
 </html>
 '''
 
-# 添加CORS支持
+# 添加CORS支持（收紧：不再使用通配符，回显请求来源）
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    origin = request.headers.get("Origin", "")
+    if origin:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,X-Auth-Token')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
@@ -621,7 +661,12 @@ def upload_file():
         if file.filename == '':
             return jsonify({'success': False, 'error': '没有选择文件'})
         
-        filepath = os.path.join(Config.upload_dir, file.filename)
+        # 安全检查：防止路径遍历，只取文件名部分
+        safe_name = os.path.basename(file.filename)
+        filepath = safe_join(UPLOAD_REAL_DIR, safe_name)
+        if filepath is None:
+            return jsonify({'success': False, 'error': '文件名不合法或路径越界'}), 400
+        
         file.save(filepath)
         
         return jsonify({'success': True, 'message': '文件上传成功'})
@@ -647,21 +692,26 @@ def list_files():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-@app.route('/download_file/<filename>')
+@app.route('/download_file/<path:filename>')
 def download_file(filename):
     try:
-        filepath = os.path.join(Config.upload_dir, filename)
-        if os.path.exists(filepath):
-            return send_file(filepath, as_attachment=True)
-        else:
-            return '文件不存在', 404
+        # 安全检查：防止路径遍历
+        safe_name = os.path.basename(filename)
+        filepath = safe_join(UPLOAD_REAL_DIR, safe_name)
+        if filepath is None or not os.path.exists(filepath):
+            return '文件不存在或路径不合法', 404
+        return send_file(filepath, as_attachment=True)
     except Exception as e:
         return f'下载失败: {str(e)}', 500
 
-@app.route('/delete_file/<filename>', methods=['DELETE'])
+@app.route('/delete_file/<path:filename>', methods=['DELETE'])
 def delete_file(filename):
     try:
-        filepath = os.path.join(Config.upload_dir, filename)
+        # 安全检查：防止路径遍历
+        safe_name = os.path.basename(filename)
+        filepath = safe_join(UPLOAD_REAL_DIR, safe_name)
+        if filepath is None:
+            return jsonify({'success': False, 'error': '路径不合法'}), 400
         if os.path.exists(filepath):
             os.remove(filepath)
             return jsonify({'success': True, 'message': '文件删除成功'})
