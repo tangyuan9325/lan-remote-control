@@ -1,11 +1,37 @@
 """
 File manager for remote file browsing, upload, and download.
+Security: all paths are sandboxed within BASE_DIR to prevent path traversal.
 """
 import os
 import json
 import time
 import threading
 from datetime import datetime
+
+# 沙箱根目录：用户主目录下的 LANRemoteControl 文件夹
+# 所有文件操作都限制在此目录内，防止路径遍历攻击
+BASE_DIR = os.path.realpath(os.path.join(os.path.expanduser("~"), "LANRemoteControl"))
+os.makedirs(BASE_DIR, exist_ok=True)
+
+
+def _safe_path(user_path: str) -> str:
+    """将用户输入路径规范化并验证是否在沙箱目录内。
+    返回规范化后的绝对路径，越界则抛出 ValueError。
+    """
+    if not user_path or user_path == "/":
+        return BASE_DIR
+    # 拒绝空字节
+    if "\x00" in user_path:
+        raise ValueError("Invalid path: null byte detected")
+    # 如果是相对路径，拼接到 BASE_DIR；如果是绝对路径，直接使用但需验证
+    if os.path.isabs(user_path):
+        candidate = os.path.realpath(user_path)
+    else:
+        candidate = os.path.realpath(os.path.join(BASE_DIR, user_path))
+    # 验证路径在沙箱内
+    if not (candidate == BASE_DIR or candidate.startswith(BASE_DIR + os.sep)):
+        raise ValueError(f"Access denied: path outside sandbox: {user_path}")
+    return candidate
 
 class FileManager:
     CHUNK_SIZE = 64 * 1024  # 64KB per chunk
@@ -17,22 +43,18 @@ class FileManager:
 
     def list_directory(self, path: str):
         try:
-            if not path or path == "/":
-                if os.name == "nt":
-                    drives = []
-                    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-                        d = f"{letter}:\\"
-                        if os.path.exists(d):
-                            drives.append({"name": d, "is_dir": True, "size": 0, "modified": ""})
-                    self._send_json({"type": "file_list_response", "path": "/", "files": drives})
-                    return
-                path = os.path.expanduser("~")
-            if not os.path.isdir(path):
+            # 安全检查：路径沙箱验证
+            try:
+                safe_dir = _safe_path(path)
+            except ValueError as e:
+                self._send_json({"type": "file_list_error", "path": path, "error": str(e)})
+                return
+            if not os.path.isdir(safe_dir):
                 self._send_json({"type": "file_list_error", "path": path, "error": "Not a directory"})
                 return
             files = []
-            for name in sorted(os.listdir(path)):
-                full = os.path.join(path, name)
+            for name in sorted(os.listdir(safe_dir)):
+                full = os.path.join(safe_dir, name)
                 try:
                     stat = os.stat(full)
                     is_dir = os.path.isdir(full)
@@ -44,20 +66,26 @@ class FileManager:
                     })
                 except OSError:
                     continue
-            self._send_json({"type": "file_list_response", "path": path, "files": files})
+            self._send_json({"type": "file_list_response", "path": safe_dir, "files": files})
         except Exception as e:
             self._send_json({"type": "file_list_error", "path": path, "error": str(e)})
 
     def download_file(self, path: str):
         def _send():
             try:
-                if not os.path.isfile(path):
+                # 安全检查：路径沙箱验证
+                try:
+                    safe_file = _safe_path(path)
+                except ValueError as e:
+                    self._send_json({"type": "file_download_error", "error": str(e)})
+                    return
+                if not os.path.isfile(safe_file):
                     self._send_json({"type": "file_download_error", "error": "File not found"})
                     return
-                size = os.path.getsize(path)
-                name = os.path.basename(path)
+                size = os.path.getsize(safe_file)
+                name = os.path.basename(safe_file)
                 self._send_json({"type": "file_download_start", "name": name, "size": size})
-                with open(path, "rb") as f:
+                with open(safe_file, "rb") as f:
                     while True:
                         chunk = f.read(self.CHUNK_SIZE)
                         if not chunk:
@@ -70,13 +98,24 @@ class FileManager:
 
     def upload_start(self, path: str, name: str, size: int):
         try:
-            if not os.path.isdir(path):
-                os.makedirs(path, exist_ok=True)
-            full_path = os.path.join(path, name)
+            # 安全检查：路径沙箱验证
+            try:
+                safe_dir = _safe_path(path)
+            except ValueError as e:
+                self._send_json({"type": "file_upload_error", "error": str(e)})
+                return
+            # 安全检查：文件名只取 basename，防止路径遍历
+            safe_name = os.path.basename(name)
+            if not safe_name:
+                self._send_json({"type": "file_upload_error", "error": "Invalid filename"})
+                return
+            if not os.path.isdir(safe_dir):
+                os.makedirs(safe_dir, exist_ok=True)
+            full_path = os.path.join(safe_dir, safe_name)
             f = open(full_path, "wb")
             self._upload_state = {
                 "path": full_path,
-                "name": name,
+                "name": safe_name,
                 "size": size,
                 "received": 0,
                 "file": f,

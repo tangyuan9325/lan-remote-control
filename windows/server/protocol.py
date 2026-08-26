@@ -14,6 +14,8 @@ MSG_JPEG = 0x02
 MSG_FILE = 0x03
 MSG_AUDIO = 0x04
 HEADER_SIZE = 5
+# 最大消息大小：64MB（防止超大消息导致内存耗尽 DoS）
+MAX_MESSAGE_SIZE = 64 * 1024 * 1024
 
 def pack_json(obj: dict) -> bytes:
     payload = json.dumps(obj, separators=(",", ":")).encode("utf-8")
@@ -44,6 +46,11 @@ def recv_exact(sock: socket.socket, n: int) -> bytes:
 def recv_message(sock: socket.socket):
     header = recv_exact(sock, HEADER_SIZE)
     msg_type, length = struct.unpack(">BI", header)
+    # 安全检查：拒绝超大消息，防止内存耗尽 DoS
+    if length > MAX_MESSAGE_SIZE:
+        raise ValueError(f"Message too large: {length} bytes (max {MAX_MESSAGE_SIZE})")
+    if length < 0:
+        raise ValueError(f"Invalid message length: {length}")
     payload = recv_exact(sock, length)
     return msg_type, payload
 
