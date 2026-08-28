@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,9 @@ type Server struct {
 	password    bool
 	conn        *net.UDPConn
 	running     bool
+	// 速率限制：每个 IP 每秒最多响应 5 次发现请求，防止 DoS
+	rateLimit   map[string][]time.Time
+	rateMu      sync.Mutex
 }
 
 func NewServer(controlPort int, hostname string, passwordRequired bool) *Server {
@@ -28,6 +32,7 @@ func NewServer(controlPort int, hostname string, passwordRequired bool) *Server 
 		controlPort: controlPort,
 		hostname:    hostname,
 		password:    passwordRequired,
+		rateLimit:   make(map[string][]time.Time),
 	}
 }
 
@@ -57,9 +62,37 @@ func (s *Server) listen() {
 			continue
 		}
 		if n >= len(magic) && strings.HasPrefix(string(buf[:n]), string(magic)) {
-			s.reply(remoteAddr)
+			// 安全检查：速率限制，防止 DoS
+			if s.checkRateLimit(remoteAddr.IP.String()) {
+				s.reply(remoteAddr)
+			}
 		}
 	}
+}
+
+// checkRateLimit 检查 IP 是否在速率限制内，返回 true 表示允许响应
+func (s *Server) checkRateLimit(ip string) bool {
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+
+	now := time.Now()
+	// 清理过期记录（超过 1 秒的）
+	if times, ok := s.rateLimit[ip]; ok {
+		valid := []time.Time{}
+		for _, t := range times {
+			if now.Sub(t) < time.Second {
+				valid = append(valid, t)
+			}
+		}
+		s.rateLimit[ip] = valid
+	}
+
+	times := s.rateLimit[ip]
+	if len(times) >= 5 {
+		return false
+	}
+	s.rateLimit[ip] = append(times, now)
+	return true
 }
 
 func (s *Server) reply(addr *net.UDPAddr) {

@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 )
@@ -13,7 +14,11 @@ const (
 	MsgFile  = 0x03
 	MsgAudio = 0x04
 	HeaderSize = 5
+	// MaxMessageSize 最大消息大小：64MB（防止超大消息导致内存耗尽 DoS）
+	MaxMessageSize = 64 * 1024 * 1024
 )
+
+var ErrMessageTooLarge = errors.New("message too large")
 
 func PackJSON(obj map[string]interface{}) []byte {
 	payload, _ := json.Marshal(obj)
@@ -55,6 +60,12 @@ func RecvMessage(conn net.Conn) (byte, []byte, error) {
 	}
 	msgType := header[0]
 	length := binary.BigEndian.Uint32(header[1:5])
+	
+	// 安全检查：拒绝超大消息，防止内存耗尽 DoS
+	if length > MaxMessageSize {
+		return 0, nil, ErrMessageTooLarge
+	}
+	
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(conn, payload); err != nil {
 		return 0, nil, err

@@ -15,7 +15,17 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		// 仅允许同源请求，防止 CSRF 攻击
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // 允许非浏览器客户端（如移动应用）
+		}
+		host := r.Host
+		// 简单的同源检查：比较 Origin 的 host 部分和请求的 Host
+		// 在生产环境中应该使用更严格的白名单机制
+		return origin == "http://"+host || origin == "https://"+host
+	},
 }
 
 type Server struct {
@@ -89,11 +99,19 @@ func discoverDevices(timeout time.Duration) []map[string]interface{} {
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		log.Printf("[WebSocket] upgrade error: %v", err)
 		return
 	}
 	defer conn.Close()
 
 	s.mu.Lock()
+	// 检查 WebSocket 连接数限制
+	if len(s.clients) >= MaxConnections {
+		s.mu.Unlock()
+		conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"connection_limit_reached"}`))
+		conn.Close()
+		return
+	}
 	s.clients[conn] = true
 	s.mu.Unlock()
 	defer func() {
@@ -117,7 +135,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		if cmd["type"] == "set_quality" {
 			if q, ok := cmd["quality"].(float64); ok {
-				s.capture.SetQuality(int(q))
+				// 输入验证：限制 quality 范围在 10-100
+				quality := int(q)
+				if quality < 10 {
+					quality = 10
+				} else if quality > 100 {
+					quality = 100
+				}
+				s.capture.SetQuality(quality)
 			}
 		}
 	}
@@ -143,9 +168,21 @@ func (s *Server) streamScreen(conn *websocket.Conn, stop <-chan struct{}) {
 func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		log.Printf("[Camera] upgrade error: %v", err)
 		return
 	}
 	defer conn.Close()
+
+	s.mu.Lock()
+	// 简单的摄像头连接数限制（最多 10 个并发摄像头连接）
+	cameraConnections := len(s.clients) // 保守估计：所有 WebSocket 连接都可能是摄像头
+	if cameraConnections >= 10 {
+		s.mu.Unlock()
+		conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"camera_connection_limit_reached"}`))
+		conn.Close()
+		return
+	}
+	s.mu.Unlock()
 
 	if !s.cam.IsRunning() {
 		s.cam.Start()

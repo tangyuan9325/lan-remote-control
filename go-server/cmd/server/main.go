@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,6 +17,11 @@ import (
 	"github.com/tangyuan9325/lan-remote-control/go-server/protocol"
 	"github.com/tangyuan9325/lan-remote-control/go-server/screen"
 	"github.com/tangyuan9325/lan-remote-control/go-server/webui"
+)
+
+const (
+	// MaxConnections 最大并发连接数限制，防止 DoS 攻击
+	MaxConnections = 100
 )
 
 var (
@@ -70,12 +76,25 @@ func main() {
 		os.Exit(0)
 	}()
 
+	// 连接数限制信号量
+	connSemaphore := make(chan struct{}, MaxConnections)
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			break
 		}
-		go handleClient(conn, capture)
+		// 检查连接数限制
+		select {
+		case connSemaphore <- struct{}{}:
+			go func(c net.Conn) {
+				defer func() { <-connSemaphore }()
+				handleClient(c, capture)
+			}(conn)
+		default:
+			log.Printf("[Server] connection limit reached, rejecting %s", conn.RemoteAddr())
+			conn.Close()
+		}
 	}
 }
 
@@ -87,7 +106,11 @@ func handleClient(conn net.Conn, capture *screen.Capturer) {
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	msgType, payload, err := protocol.RecvMessage(conn)
 	if err != nil {
-		log.Printf("[Session %s] handshake: %v", addr, err)
+		if err == protocol.ErrMessageTooLarge {
+			log.Printf("[Session %s] rejected: message too large", addr)
+		} else {
+			log.Printf("[Session %s] handshake: %v", addr, err)
+		}
 		return
 	}
 	conn.SetReadDeadline(time.Time{})
@@ -117,6 +140,9 @@ func handleClient(conn net.Conn, capture *screen.Capturer) {
 	for {
 		msgType, payload, err := protocol.RecvMessage(conn)
 		if err != nil {
+			if err == protocol.ErrMessageTooLarge {
+				log.Printf("[Session %s] error: message too large", addr)
+			}
 			break
 		}
 		if msgType == protocol.MsgJSON {
@@ -124,7 +150,14 @@ func handleClient(conn net.Conn, capture *screen.Capturer) {
 			if json.Unmarshal(payload, &cmd) == nil {
 				if cmd["type"] == "set_quality" {
 					if q, ok := cmd["quality"].(float64); ok {
-						capture.SetQuality(int(q))
+						// 输入验证：限制 quality 范围在 10-100
+						quality := int(q)
+						if quality < 10 {
+							quality = 10
+						} else if quality > 100 {
+							quality = 100
+						}
+						capture.SetQuality(quality)
 					}
 				}
 			}

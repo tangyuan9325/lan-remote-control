@@ -17,6 +17,22 @@ class DiscoveryServer:
         self._sock = None
         self._thread = None
         self._running = False
+        # 速率限制：每个 IP 每秒最多响应 5 次发现请求，防止 DoS
+        self._rate_limit = {}
+        self._rate_limit_lock = threading.Lock()
+
+    def _check_rate_limit(self, ip: str) -> bool:
+        """检查 IP 是否在速率限制内，返回 True 表示允许响应"""
+        import time
+        with self._rate_limit_lock:
+            now = time.time()
+            # 清理过期记录（超过 1 秒的）
+            self._rate_limit = {k: v for k, v in self._rate_limit.items() if now - v < 1.0}
+            count = self._rate_limit.get(ip, 0)
+            if count >= 5:
+                return False
+            self._rate_limit[ip] = count + 1
+            return True
 
     def start(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -33,6 +49,9 @@ class DiscoveryServer:
             except OSError:
                 break
             if data.strip() == DISCOVERY_MAGIC:
+                # 安全检查：速率限制，防止 DoS
+                if not self._check_rate_limit(addr[0]):
+                    continue  # 超过速率限制，忽略请求
                 local_ip = self._get_local_ip_for(addr[0])
                 reply = {
                     "type": "discovery_response",

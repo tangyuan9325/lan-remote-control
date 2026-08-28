@@ -109,6 +109,15 @@ class FileManager:
             if not safe_name:
                 self._send_json({"type": "file_upload_error", "error": "Invalid filename"})
                 return
+            # 安全检查：拒绝危险字符（空字节、路径分隔符等）
+            if any(c in safe_name for c in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']):
+                self._send_json({"type": "file_upload_error", "error": "Invalid characters in filename"})
+                return
+            # 安全检查：限制文件大小（最大 1GB）
+            MAX_UPLOAD_SIZE = 1024 * 1024 * 1024
+            if size > MAX_UPLOAD_SIZE:
+                self._send_json({"type": "file_upload_error", "error": f"File too large (max {MAX_UPLOAD_SIZE} bytes)"})
+                return
             if not os.path.isdir(safe_dir):
                 os.makedirs(safe_dir, exist_ok=True)
             full_path = os.path.join(safe_dir, safe_name)

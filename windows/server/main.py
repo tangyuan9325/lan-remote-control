@@ -21,6 +21,25 @@ from audio_handler import AudioHandler
 
 CONTROL_PORT = 9001
 FPS_TARGET = 30
+MAX_CONNECTIONS = 100  # 最大并发连接数限制，防止 DoS 攻击
+
+class ServerState:
+    def __init__(self):
+        self.connection_count = 0
+        self.lock = threading.Lock()
+    
+    def try_acquire_connection(self) -> bool:
+        with self.lock:
+            if self.connection_count >= MAX_CONNECTIONS:
+                return False
+            self.connection_count += 1
+            return True
+    
+    def release_connection(self):
+        with self.lock:
+            self.connection_count -= 1
+
+server_state = ServerState()
 
 class ClientSession:
     def __init__(self, conn, addr, capture, password=None):
@@ -36,6 +55,10 @@ class ClientSession:
         self._stream_thread = None
 
     def start(self):
+        if not server_state.try_acquire_connection():
+            print(f"[Session {self.addr}] rejected: connection limit reached")
+            self.conn.close()
+            return
         self.running = True
         try:
             self._handle()
@@ -46,6 +69,7 @@ class ClientSession:
             if self.audio:
                 self.audio.stop()
             self.conn.close()
+            server_state.release_connection()
 
     def _handle(self):
         msg_type, payload = recv_message(self.conn)
@@ -86,7 +110,13 @@ class ClientSession:
         if t == "ping":
             send_json(self.conn, {"type": "pong"})
         elif t == "set_quality":
-            self.capture.set_quality(msg.get("quality", 50))
+            # 输入验证：限制 quality 范围在 10-100
+            quality = int(msg.get("quality", 50))
+            if quality < 10:
+                quality = 10
+            elif quality > 100:
+                quality = 100
+            self.capture.set_quality(quality)
         elif t == "file_list":
             if self.file_mgr: self.file_mgr.list_directory(msg.get("path", ""))
         elif t == "file_download":
