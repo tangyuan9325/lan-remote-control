@@ -14,6 +14,11 @@ import (
 	"github.com/tangyuan9325/lan-remote-control/go-server/screen"
 )
 
+const (
+	// MaxConnections 最大并发连接数限制，防止 DoS 攻击
+	MaxConnections = 100
+)
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		// 仅允许同源请求，防止 CSRF 攻击

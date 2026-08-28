@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
