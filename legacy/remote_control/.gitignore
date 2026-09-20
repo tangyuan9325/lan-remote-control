@@ -1,0 +1,5 @@
+dist/
+uploads/
+*.exe
+__pycache__/
+*.pyc
