@@ -115,11 +115,11 @@ scripts/build_windows.bat
 
 ---
 
-## 方向二：legacy/remote_control（早期实验项目 · 已完成安全重构）
+## 方向二：legacy/remote_control（早期实验项目 · v1.4.1 Claude 重构版）
 
-基于 Python（Flask + PyQt5）的早期技术验证版。**当前推荐使用重构后的 `rc14` 包**（Claude 风格 UI、按需采集、多层安全防护）；历史单体文件（`main.py`、`remote_control_v1.x.py`）已全部加上弃用守卫——直接运行只会打印迁移提示并退出，杜绝误跑带漏洞的旧代码。
+基于 Python（Flask + PyQt5）的早期技术验证版，**v1.4 起完成整体重构**（版本号 `1.4.1-claude`）。当前推荐入口为重构后的 **`rc14` 包**；历史单体文件（`main.py`、`remote_control_v1.x.py`）已全部加上 import 前置弃用守卫——直接运行只打印迁移提示并退出，杜绝误跑无密码/带 RCE 的旧代码。详见 [legacy/remote_control/README.md](legacy/remote_control/README.md)。
 
-### 运行（v1.4 重构版）
+### 运行（v1.4.1 重构版）
 
 ```bash
 cd legacy/remote_control
@@ -127,16 +127,22 @@ pip install -r requirements.txt
 python -m rc14.main                      # GUI 控制面板（PyQt5，Claude 风格）
 python -m rc14.main --headless \
     --port 5000 --password s3cret        # 无 GUI，仅服务器
-python tests/test_rc14.py                # 自检（15 项测试）
-build_rc14.bat                           # PyInstaller 一键打包（修复旧 packeg.bat/spec）
+python tests/test_rc14.py                # 自检（15 项测试，全部通过）
+build_rc14.bat                           # PyInstaller 一键打包（配合新 rc14.spec）
 ```
+
+浏览器访问 `http://<被控端IP>:5000`；设置密码后 Web 端先弹口令门，通过后写入 `rc_token` Cookie，画面流与 API 自动携带凭证。
 
 ### 重构要点
 
-- **UI**：Web 与 PyQt5 均改为 Claude 风格暖色排版
-- **算力优化**：按需采集（无观看者时 worker 挂起）、帧差检测跳变推送、长边 ≤1920 分辨率钳制
-- **安全**：访问密码、路径穿越拦截、上传名净化与大小校验、远程 CMD 默认禁用（`--enable-cmd` 显式开启）、XSS 消毒
-- **打包**：新 `rc14.spec` 收集 flask/cv2/PyQt5 动态依赖与图标资源，修复旧 spec 入口路径错误导致的 ModuleNotFoundError / Qt 平台插件缺失
+- **🎨 UI — Claude 风格**：Web 控制台与 PyQt5 面板统一采用 Anthropic/Claude 设计语言——暖米色底 `#faf9f5`、衬线标题、赤陶色强调、发丝边框卡片；GUI 以一份全局 QSS 替代旧版几十处逐控件样式。
+- **⚡ 算力优化（大幅降低运行时占用）**：
+  - 按需采集：屏幕/摄像头/麦克风工作线程带 touch/viewers 引用机制，**无观看者时挂起，空闲 CPU/GPU 占用趋近于 0**；
+  - 帧差检测：采样比对，静止画面跳过编码与推流；
+  - 分辨率钳制：长边 ≤1920；优先 dxcam（DXGI）采集路径；
+  - MJPEG 流护栏：最大时长 + 停止条件，防连接泄漏。
+- **🔒 安全加固**：访问密码（恒定时间比较防时序侧信道）、`rc_token` Cookie 鉴权贯通前端、路径穿越拦截（`safe_upload_path`）、上传名净化 + 大小校验 + 拒绝符号链接、远程 CMD 默认禁用（`--enable-cmd` 显式开启）、XSS 转义渲染、历史文件弃用守卫。
+- **📦 PyInstaller 打包修复**：新增 `rc14.spec` + `build_rc14.bat`，修复旧 `packeg.bat`/spec 入口路径错误（ModuleNotFoundError）与 Qt 平台插件缺失；`--collect-all` 收集 cv2/PyQt5/PIL 动态依赖，打包前环境校验与陈旧产物清理。
 
 ### 定位差异
 
