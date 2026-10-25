@@ -12,6 +12,14 @@ on:
         description: 'Release version (e.g. v1.2.0)'
         required: true
         default: 'v1.2.0'
+      build_go_v13:
+        description: 'Build go-server v1.3 engine (windows exe)'
+        type: boolean
+        default: true
+      build_legacy_v2:
+        description: 'Build legacy-v2 Go server (windows exe)'
+        type: boolean
+        default: true
 
 jobs:
   release:
@@ -56,12 +64,30 @@ jobs:
           flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk ../../lan-remote-control-android.apk
 
-      - name: Build Windows Server
+      - name: Build Windows Server (Python, legacy fixed build)
         run: |
           pip install pyinstaller mss Pillow pynput 2>/dev/null || true
           cd windows/server
           pyinstaller --onefile --name RemoteControl-Server main.py 2>/dev/null || echo "PyInstaller skipped"
-          ls dist/ 2>/dev/null && cp dist/RemoteControl-Server ../../RemoteControl-Server || echo "No server binary"
+          ls dist/ 2>/dev/null && cp dist/RemoteControl-Server ../../RemoteControl-Server.exe || echo "No server binary"
+
+      - name: Set up Go
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_go_v13 != 'false' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build go-server v1.3 engine (Windows exe)
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_go_v13 != 'false' }}
+        run: |
+          cd go-server
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../lan-remote-control-server-v1.3.0-windows-amd64.exe ./cmd/server
+
+      - name: Build legacy-v2 Go server (Windows exe)
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_legacy_v2 != 'false' }}
+        run: |
+          cd legacy-v2
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../remote-control-v2.0.0-windows-amd64.exe ./cmd/server
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -71,29 +97,27 @@ jobs:
           body: |
             ## LAN Remote Control ${{ steps.version.outputs.tag }}
 
-            ### New Features (v1.2.0)
-            - 📁 **File transfer** — remote directory browsing, download, upload
-            - 🎤 **Voice chat** — PCM 16kHz real-time bidirectional audio
-            - 🪟 **PyQt5 WebView UI** — modern clean interface for Windows viewer
-            - 📱 **Android file manager** — browse and download remote files
-            - 🔊 **Android voice chat** — microphone and speaker support
+            ### 构件清单 (Assets)
+            - `lan-remote-control-android.apk` — Android 控制端 APK（Flutter，含文件管理/语音）
+            - `lan-remote-control-server-v1.3.0-windows-amd64.exe` — **Go 语言重构版**被控端引擎 v1.3.0（TCP 9001 + Web 8080，恒定时间密码校验、WebSocket 鉴权、SSRF 防护、输入注入、摄像头转发）
+            - `remote-control-v2.0.0-windows-amd64.exe` — **legacy v2.0 Go 重写版**（Claude 风格 Web UI、按需采集帧差去重、MJPEG 并发上限、rc_token Cookie 鉴权、路径安全）
+            - `RemoteControl-Server.exe` — 老版本 Python (windows/server) 修复构建
+            - legacy v1.4.1 Python 修复版源码位于 `legacy/remote_control/rc14/`（`python -m rc14.main` 运行）
 
-            ### Protocol v1.2
-            - `0x01` JSON control messages
-            - `0x02` JPEG screen frames
-            - `0x03` File chunks (64KB)
-            - `0x04` PCM audio frames (16-bit, 16kHz, mono)
-
-            ### Assets
-            - `lan-remote-control-android.apk` — Android client APK
-            - `RemoteControl-Server` — Windows/Linux server binary (if built)
+            ### 安全与功能要点
+            - 密码比较使用 crypto/subtle 恒定时间，杜绝时序侧信道
+            - /ws、/camera、video_feed 全部强制鉴权；UDP 发现限速；连接数 DoS 上限
+            - 文件传输：路径穿越拦截、危险字符过滤、1GB 大小限制
+            - 静态资源 go:embed 内嵌，PyInstaller spec 修复打包问题
 
             ### Usage
-            1. Run `RemoteControl-Server` on the Windows PC to be controlled
-            2. Run the viewer (PyQt5) or install the APK on Android
-            3. Devices are auto-discovered on the same LAN
+            1. 在被控机运行任一 server exe（推荐 v1.3.0 Go 版），设置 `--password`
+            2. 浏览器打开 `http://被控机IP:8080` 或安装 APK / 运行 v2.0 Web UI
+            3. 同局域网设备经 UDP:9000 自动发现
           files: |
             lan-remote-control-android.apk
-            RemoteControl-Server
+            RemoteControl-Server.exe
+            lan-remote-control-server-v1.3.0-windows-amd64.exe
+            remote-control-v2.0.0-windows-amd64.exe
           draft: false
           prerelease: false
