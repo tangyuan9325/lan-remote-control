@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -44,11 +47,45 @@ class _ServerHomePageState extends State<ServerHomePage> {
   String _status = '未启动';
   String _deviceName = 'Android Device';
 
+  // Connection password (persisted to disk). Empty string = no password.
+  String _password = '';
+  static const String _prefsPath = 'server_config.json';
+
   @override
   void initState() {
     super.initState();
     _loadDeviceName();
+    _loadPassword();
     _checkPermissions();
+  }
+
+  Future<void> _loadPassword() async {
+    try {
+      final dir = await _configDir();
+      final f = File('${dir.path}/$_prefsPath');
+      if (await f.exists()) {
+        final json = jsonDecode(await f.readAsString());
+        final pw = json['password'];
+        if (mounted && pw is String) setState(() => _password = pw);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _savePassword(String pw) async {
+    _password = pw;
+    try {
+      final dir = await _configDir();
+      final f = File('${dir.path}/$_prefsPath');
+      await f.writeAsString(jsonEncode({'password': pw}));
+    } catch (_) {}
+  }
+
+  Future<Directory> _configDir() async {
+    // Application support directory without pulling in another dependency:
+    // use the app's documents dir via dart:io on Android.
+    final dir = Directory('/data/user/0/com.example.remote_control_server/app_flutter');
+    if (await dir.exists()) return dir;
+    return Directory.systemTemp.createTempSync('rcs');
   }
 
   Future<void> _loadDeviceName() async {
@@ -89,10 +126,13 @@ class _ServerHomePageState extends State<ServerHomePage> {
     );
     await _discovery!.start();
 
-    // Start control server
+    // Start control server. A configured password is enforced on every
+    // connection (constant-time compare inside ClientSession); an empty
+    // password means open access, which the UI warns about.
     _controlServer = ControlServer(
       port: 9001,
       screenCapture: _screenCapture,
+      password: _password.isEmpty ? null : _password,
     );
     await _controlServer!.start();
 
@@ -112,6 +152,32 @@ class _ServerHomePageState extends State<ServerHomePage> {
       _screenReady = false;
       _status = '已停止';
     });
+  }
+
+  Future<void> _editPassword() async {
+    final controller = TextEditingController(text: _password);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('设置连接密码'),
+        content: TextField(
+          controller: controller,
+          obscureText: true,
+          decoration: const InputDecoration(hintText: '留空表示不启用密码'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      await _savePassword(result.trim());
+      if (mounted) setState(() {});
+    }
   }
 
   @override
@@ -161,6 +227,20 @@ class _ServerHomePageState extends State<ServerHomePage> {
             ),
 
             const SizedBox(height: 24),
+
+            // Connection password
+            Card(
+              child: ListTile(
+                leading: Icon(
+                  _password.isEmpty ? Icons.lock_open : Icons.lock,
+                  color: _password.isEmpty ? Colors.orange : Colors.green,
+                ),
+                title: const Text('连接密码'),
+                subtitle: Text(_password.isEmpty ? '未设置（任何局域网设备可连接）' : '已设置'),
+                trailing: const Icon(Icons.edit),
+                onTap: _isRunning ? null : _editPassword,
+              ),
+            ),
 
             // Permission status
             _PermissionTile(

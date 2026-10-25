@@ -25,6 +25,13 @@ class RemoteConnection {
   BytesBuilder? _downloadData;
   String? _uploadPath;
 
+  /// 单条消息最大长度（与 Go 端 protocol.MaxMessageSize 对齐，64MB），
+  /// 防止恶意/异常长度头导致 OOM。
+  static const int maxMessageSize = 64 * 1024 * 1024;
+
+  /// 下载文件累计字节上限（512MB），超限即中止并报错，防止内存耗尽。
+  static const int maxDownloadSize = 512 * 1024 * 1024;
+
   final StreamController<Uint8List> _frameController = StreamController.broadcast();
   final StreamController<String> _statusController = StreamController.broadcast();
   final StreamController<Map<String, dynamic>> _fileListController = StreamController.broadcast();
@@ -89,18 +96,42 @@ class RemoteConnection {
   }
 
   void _readLoop() async {
-    try {
-      final buffer = BytesBuilder();
-      await for (final data in _socket!) {
-        buffer.add(data);
-        while (true) {
-          final bytes = buffer.toBytes();
-          if (bytes.length < Protocol.headerSize) break;
-          final length = ByteData.sublistView(bytes, 1, 5).getUint32(0, Endian.big);
-          if (bytes.length < Protocol.headerSize + length) break;
+    // 游标式缓冲解析：避免每帧 buffer.toBytes()/clear() 造成的 O(n^2) 整体拷贝。
+    var buf = Uint8List(0);
+    var start = 0; // 已消费偏移
+    var end = 0;   // 有效数据末尾
 
-          final msgType = bytes[0];
-          final payload = bytes.sublist(Protocol.headerSize, Protocol.headerSize + length);
+    try {
+      await for (final data in _socket!) {
+        final avail = end - start + data.length;
+        if (buf.length < avail) {
+          // 扩容并压缩已消费空间（摊还 O(1)）。
+          var newCap = buf.isEmpty ? 4096 : buf.length * 2;
+          if (newCap < avail) newCap = avail;
+          final grown = Uint8List(newCap);
+          grown.setRange(0, end - start, buf, start);
+          buf = grown;
+          end -= start;
+          start = 0;
+        }
+        buf.setRange(end, end + data.length, data);
+        end += data.length;
+
+        while (true) {
+          final pending = end - start;
+          if (pending < Protocol.headerSize) break;
+          final length = ByteData.sublistView(buf, start + 1, start + 5).getUint32(0, Endian.big);
+          // 长度守卫：与 Go 端 MaxMessageSize 对齐，防恶意/异常长度头导致 OOM。
+          if (length > maxMessageSize) {
+            _statusController.add('Error: oversized message ($length bytes), disconnecting');
+            disconnect();
+            return;
+          }
+          if (pending < Protocol.headerSize + length) break;
+
+          final msgType = buf[start];
+          final payload = buf.sublist(start + Protocol.headerSize, start + Protocol.headerSize + length);
+          start += Protocol.headerSize + length;
 
           if (!_handshakeDone) {
             if (msgType == Protocol.msgJson) {
@@ -126,8 +157,15 @@ class RemoteConnection {
               _frameController.add(Uint8List.fromList(payload));
             } else if (msgType == Protocol.msgFile) {
               if (_downloadData != null) {
-                _downloadData!.add(payload);
-                _downloadProgressController.add(_downloadData!.length);
+                // 下载累计上限：防止超大文件把整包读进内存导致 OOM。
+                if (_downloadData!.length + payload.length > maxDownloadSize) {
+                  _fileErrorController.add('Download exceeds ${maxDownloadSize ~/ (1024 * 1024)}MB limit');
+                  _downloadName = null;
+                  _downloadData = null;
+                } else {
+                  _downloadData!.add(payload);
+                  _downloadProgressController.add(_downloadData!.length);
+                }
               }
             } else if (msgType == Protocol.msgAudio) {
               _audioController.add(Uint8List.fromList(payload));
@@ -135,10 +173,6 @@ class RemoteConnection {
               _handleJson(payload);
             }
           }
-
-          final remaining = bytes.sublist(Protocol.headerSize + length);
-          buffer.clear();
-          buffer.add(remaining);
         }
       }
     } catch (e) {
@@ -151,6 +185,9 @@ class RemoteConnection {
       _statusController.add('Disconnected');
     }
   }
+
+  /// 等待 `file_upload_ready` 确认信号（事件驱动，替代固定 200ms 延时）。
+  Completer<bool>? _uploadReadyCompleter;
 
   void _handleJson(Uint8List payload) {
     try {
@@ -166,10 +203,20 @@ class RemoteConnection {
           _fileErrorController.add(msg['error'] ?? 'File error');
           _downloadName = null;
           _downloadData = null;
+          // 上传出错时唤醒等待 ready 的协程，避免卡到超时。
+          if (_uploadReadyCompleter != null && !_uploadReadyCompleter!.isCompleted) {
+            _uploadReadyCompleter!.complete(false);
+          }
           break;
         case 'file_download_start':
           _downloadName = msg['name'];
           _downloadSize = msg['size'] ?? 0;
+          // 服务端声明的大小超过内存上限时直接拒绝，防止 OOM。
+          if (_downloadSize > maxDownloadSize) {
+            _fileErrorController.add('Remote file too large ($_downloadSize bytes)');
+            _downloadName = null;
+            break;
+          }
           _downloadData = BytesBuilder();
           _downloadStartController.add(msg);
           break;
@@ -186,6 +233,9 @@ class RemoteConnection {
           break;
         case 'file_upload_ready':
           _uploadPath = msg['path'];
+          if (_uploadReadyCompleter != null && !_uploadReadyCompleter!.isCompleted) {
+            _uploadReadyCompleter!.complete(true);
+          }
           break;
         case 'file_upload_done':
           _uploadDoneController.add(msg);
@@ -220,17 +270,40 @@ class RemoteConnection {
   Future<void> uploadFile(String localPath, String remoteDir) async {
     final file = File(localPath);
     if (!await file.exists()) return;
-    final name = file.path.split('/').last;
+    // 兼容 Windows/POSIX 路径分隔符（原实现 split('/') 在反斜杠路径下会取错文件名）。
+    final name = file.uri.pathSegments.last;
     final size = await file.length();
+
+    // 事件驱动握手：发送 upload_start 后等待服务端 `file_upload_ready` 确认，
+    // 替代原先固定 200ms 延时（网络抖动时会在 ready 前发出数据块导致上传失败）。
+    _uploadReadyCompleter = Completer<bool>();
     sendInput({'type': 'file_upload_start', 'path': remoteDir, 'name': name, 'size': size});
-    await Future.delayed(const Duration(milliseconds: 200));
+    bool ready;
+    try {
+      ready = await _uploadReadyCompleter!.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => false,
+      );
+    } finally {
+      _uploadReadyCompleter = null;
+    }
+    if (!ready || !_connected || _socket == null) {
+      _fileErrorController.add('Upload not accepted by remote (no file_upload_ready)');
+      return;
+    }
+
     final stream = file.openRead();
     await for (final chunk in stream) {
-      if (_socket != null && _connected) {
-        _socket!.add(Protocol.packFile(Uint8List.fromList(chunk)));
+      if (_socket == null || !_connected) {
+        _fileErrorController.add('Upload interrupted: connection lost');
+        return;
       }
+      _socket!.add(Protocol.packFile(Uint8List.fromList(chunk)));
+      // 周期性 flush，利用 TCP 背压避免一次性灌满写缓冲。
+      await _socket!.flush();
     }
     sendInput({'type': 'file_upload_complete', 'name': name});
+    await _socket!.flush();
   }
 
   void startVoice() { sendInput({'type': 'voice_start'}); }

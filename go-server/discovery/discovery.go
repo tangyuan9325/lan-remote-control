@@ -6,7 +6,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/tangyuan9325/lan-remote-control/go-server/protocol"
 )
 
 const DiscoveryPort = 9000
@@ -18,10 +21,10 @@ type Server struct {
 	hostname    string
 	password    bool
 	conn        *net.UDPConn
-	running     bool
+	running     atomic.Bool // 原子标志：修复 listen goroutine 与 Stop 之间的数据竞争
 	// 速率限制：每个 IP 每秒最多响应 5 次发现请求，防止 DoS
-	rateLimit   map[string][]time.Time
-	rateMu      sync.Mutex
+	rateLimit map[string][]time.Time
+	rateMu    sync.Mutex
 }
 
 func NewServer(controlPort int, hostname string, passwordRequired bool) *Server {
@@ -46,17 +49,17 @@ func (s *Server) Start() error {
 		return err
 	}
 	s.conn = conn
-	s.running = true
+	s.running.Store(true)
 	go s.listen()
 	return nil
 }
 
 func (s *Server) listen() {
 	buf := make([]byte, 1024)
-	for s.running {
+	for s.running.Load() {
 		n, remoteAddr, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
-			if !s.running {
+			if !s.running.Load() {
 				return
 			}
 			continue
@@ -78,7 +81,7 @@ func (s *Server) checkRateLimit(ip string) bool {
 	now := time.Now()
 	// 清理过期记录（超过 1 秒的）
 	if times, ok := s.rateLimit[ip]; ok {
-		valid := []time.Time{}
+		valid := times[:0]
 		for _, t := range times {
 			if now.Sub(t) < time.Second {
 				valid = append(valid, t)
@@ -102,12 +105,27 @@ func (s *Server) reply(addr *net.UDPAddr) {
 		"hostname":          s.hostname,
 		"ip":                localIP,
 		"port":              s.controlPort,
-		"os":                "Windows",
-		"version":           "1.3.0",
+		"os":                runtimeOS(),
+		"version":           protocol.Version,
 		"password_required": s.password,
 	}
 	data, _ := json.Marshal(resp)
-	s.conn.WriteToUDP(data, addr)
+	if conn := s.conn; conn != nil && s.running.Load() {
+		conn.WriteToUDP(data, addr)
+	}
+}
+
+func runtimeOS() string {
+	switch goos() {
+	case "windows":
+		return "Windows"
+	case "linux":
+		return "Linux"
+	case "darwin":
+		return "macOS"
+	default:
+		return "Unknown"
+	}
 }
 
 func getLocalIP() string {
@@ -126,7 +144,7 @@ func getLocalIP() string {
 }
 
 func (s *Server) Stop() {
-	s.running = false
+	s.running.Store(false)
 	if s.conn != nil {
 		s.conn.Close()
 	}

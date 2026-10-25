@@ -135,13 +135,52 @@ class FileManager:
 
     def upload_chunk(self, data: bytes):
         if self._upload_state and self._upload_state["file"]:
+            # Enforce the declared size so a malicious/buggy client cannot
+            # write past the announced length into the sandbox.
+            expected = self._upload_state["size"]
+            received = self._upload_state["received"]
+            if received + len(data) > expected:
+                allowed = max(0, expected - received)
+                if allowed:
+                    self._upload_state["file"].write(data[:allowed])
+                    self._upload_state["received"] += allowed
+                self._abort_upload(error="Upload exceeded declared size")
+                return
             self._upload_state["file"].write(data)
             self._upload_state["received"] += len(data)
 
+    def _abort_upload(self, error: str = "Upload aborted"):
+        """Close and remove a partially written upload."""
+        state = self._upload_state
+        self._upload_state = None
+        if not state:
+            return
+        try:
+            if state["file"]:
+                state["file"].close()
+        except OSError:
+            pass
+        try:
+            os.remove(state["path"])
+        except OSError:
+            pass
+        self._send_json({"type": "file_upload_error", "error": error})
+
     def upload_complete(self, name: str):
         if self._upload_state:
-            self._upload_state["file"].close()
             received = self._upload_state["received"]
+            expected = self._upload_state["size"]
             full_path = self._upload_state["path"]
-            self._send_json({"type": "file_upload_done", "path": full_path, "size": received})
+            safe_name = self._upload_state["name"]
+            # Re-check the final path (defense in depth against symlink swaps).
+            real = os.path.realpath(full_path)
+            if not (real == BASE_DIR or real.startswith(BASE_DIR + os.sep)):
+                self._abort_upload(error="Access denied: path outside sandbox")
+                return
+            if received != expected:
+                self._abort_upload(
+                    error=f"Size mismatch: expected {expected}, got {received}")
+                return
+            self._upload_state["file"].close()
             self._upload_state = None
+            self._send_json({"type": "file_upload_done", "path": full_path, "size": received, "name": safe_name})

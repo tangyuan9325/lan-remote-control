@@ -47,7 +47,7 @@ class DiscoveryServer {
       'ip': localIp,
       'port': controlPort,
       'os': 'Android ${Platform.operatingSystemVersion}',
-      'version': '1.2.0',
+      'version': '1.3.0',
       'password_required': passwordRequired,
     };
     try {

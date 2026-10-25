@@ -43,7 +43,8 @@ class Bridge(QObject):
         self._download_name = None
         self._download_size = 0
         self._download_data = bytearray()
-        self._upload_path = None
+        self._upload_ready = threading.Event()
+        self._upload_failed = False
         self._pyaudio = None
         self._record_stream = None
         self._play_stream = None
@@ -132,38 +133,46 @@ class Bridge(QObject):
             self._upload_file(path)
 
     def _upload_file(self, local_path, remote_dir="."):
+        # Event-driven handshake: wait for the server's file_upload_ready
+        # (handled in _recv_loop) instead of racing on a fixed 5s sleep.
+        # The old code set _upload_path and then looped while it was still
+        # non-null, so it always timed out AND double-sent chunks from both
+        # this thread and the ready-handler thread.
         def _run():
             try:
                 name = os.path.basename(local_path)
                 size = os.path.getsize(local_path)
+                self._upload_ready.clear()
+                self._upload_failed = False
                 send_json(self._sock, {"type": "file_upload_start", "path": remote_dir, "name": name, "size": size})
-                self._upload_path = local_path
-                import time
-                for _ in range(50):
-                    if self._upload_path is None:
-                        break
-                    time.sleep(0.1)
-                if self._upload_path:
-                    with open(local_path, "rb") as f:
-                        while True:
-                            chunk = f.read(64 * 1024)
-                            if not chunk:
-                                break
-                            self._send_file_chunk(chunk)
-                    send_json(self._sock, {"type": "file_upload_complete", "name": name})
-                    self._upload_path = None
+                if not self._upload_ready.wait(timeout=10):
+                    self.fileError.emit("Upload handshake timeout")
+                    return
+                if self._upload_failed or not self._connected:
+                    return  # error already reported by _recv_loop
+                with open(local_path, "rb") as f:
+                    while True:
+                        chunk = f.read(64 * 1024)
+                        if not chunk:
+                            break
+                        if not self._send_file_chunk(chunk):
+                            self.fileError.emit("Upload interrupted: connection lost")
+                            return
+                send_json(self._sock, {"type": "file_upload_complete", "name": name})
             except Exception as e:
                 self.fileError.emit(str(e))
         threading.Thread(target=_run, daemon=True).start()
 
-    def _send_file_chunk(self, data):
+    def _send_file_chunk(self, data) -> bool:
         if self._sock and self._connected:
             import struct
             header = struct.pack(">BI", MSG_FILE, len(data))
             try:
                 self._sock.sendall(header + data)
+                return True
             except Exception:
-                pass
+                return False
+        return False
 
     @pyqtSlot()
     def startVoice(self):
@@ -309,25 +318,14 @@ class Bridge(QObject):
                         self._download_name = None
                         self._download_data = bytearray()
                     elif t == "file_upload_ready":
-                        if self._upload_path and os.path.isfile(self._upload_path):
-                            local = self._upload_path
-                            self._upload_path = None
-                            def _send_chunks():
-                                try:
-                                    with open(local, "rb") as f:
-                                        while True:
-                                            chunk = f.read(64 * 1024)
-                                            if not chunk:
-                                                break
-                                            self._send_file_chunk(chunk)
-                                    name = os.path.basename(local)
-                                    send_json(self._sock, {"type": "file_upload_complete", "name": name})
-                                except Exception as e:
-                                    self.fileError.emit(str(e))
-                            threading.Thread(target=_send_chunks, daemon=True).start()
+                        # Unblock the _upload_file sender thread.
+                        self._upload_failed = False
+                        self._upload_ready.set()
                     elif t == "file_upload_done":
                         self.fileUploadDone.emit(json.dumps(msg))
                     elif t == "file_upload_error":
+                        self._upload_failed = True
+                        self._upload_ready.set()  # wake sender thread to abort
                         self.fileError.emit(msg.get("error", "Upload error"))
                     elif t == "voice_ready":
                         self._start_recording()
