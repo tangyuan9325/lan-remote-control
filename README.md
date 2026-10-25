@@ -12,6 +12,7 @@ lan-remote-control/                 # 方向一：主项目（本目录）
 ├── build/                          #   构建产物
 ├── docs/                           #   协议文档
 ├── scripts/                        #   打包脚本
+├── legacy-v2/                      #   方向三：rc14 的 Go 语言重构版（v2.0，单二进制零依赖）
 └── legacy/remote_control/          # 方向二：早期实验项目（已安全重构为 rc14）
 ```
 
@@ -139,18 +140,43 @@ build_rc14.bat                           # PyInstaller 一键打包（配合新 
 - **⚡ 算力优化（大幅降低运行时占用）**：
   - 按需采集：屏幕/摄像头/麦克风工作线程带 touch/viewers 引用机制，**无观看者时挂起，空闲 CPU/GPU 占用趋近于 0**；
   - 帧差检测：采样比对，静止画面跳过编码与推流；
+  - 帧代际去重：MJPEG 流仅推送新编码帧，静止画面零带宽零重复发送；
   - 分辨率钳制：长边 ≤1920；优先 dxcam（DXGI）采集路径；
-  - MJPEG 流护栏：最大时长 + 停止条件，防连接泄漏。
+  - MJPEG 流护栏：最大时长 + 停止条件 + **全局并发流上限（8，超限 503）**，防连接泄漏与流耗尽 DoS。
 - **🔒 安全加固**：访问密码（恒定时间比较防时序侧信道）、`rc_token` Cookie 鉴权贯通前端、路径穿越拦截（`safe_upload_path`）、上传名净化 + 大小校验 + 拒绝符号链接、远程 CMD 默认禁用（`--enable-cmd` 显式开启）、XSS 转义渲染、历史文件弃用守卫。
 - **📦 PyInstaller 打包修复**：新增 `rc14.spec` + `build_rc14.bat`，修复旧 `packeg.bat`/spec 入口路径错误（ModuleNotFoundError）与 Qt 平台插件缺失；`--collect-all` 收集 cv2/PyQt5/PIL 动态依赖，打包前环境校验与陈旧产物清理。
 
+---
+
+## 方向三：legacy-v2（rc14 的 Go 重构版，v2.0）
+
+将 v1.4.1 rc14（Flask + Pillow）整体用 **Go 标准库 net/http** 重写，保留同一套 Claude 风格 Web 控制台、端点与鉴权语义，但彻底摆脱 Python 运行时与 PyInstaller：
+
+| 维度 | rc14 (Python) | legacy-v2 (Go) |
+|------|---------------|----------------|
+| 交付物 | PyInstaller EXE（~200MB，含 Qt/cv2） | 单个静态二进制（~10MB，交叉编译即得 Windows exe） |
+| 打包问题 | 曾有 hiddenimports/Qt 插件坑 | 不存在（无动态 import） |
+| 并发模型 | Flask 线程池，每流一线程 | goroutine + netpoll，8 路流上限原子计数 |
+| 空闲算力 | 工作线程 parked | 采集 worker parked，帧代际去重（静止屏零推流） |
+| 鉴权 | 密码 + rc_token cookie | 相同语义 + `crypto/subtle` 恒定时间比较 |
+| 安全头 / 路径防护 / CMD 开关 | ✅ | ✅（行为对齐，附单元测试） |
+
+```bash
+cd legacy-v2
+go build ./... && go test ./...                     # 构建 + 单元自检
+GOOS=windows GOARCH=amd64 go build -o dist/legacy-v2-server.exe ./cmd/server
+./dist/legacy-v2-server.exe -port 5000 -password "your-pass" -fps 15 -quality 60
+```
+
+详见 [legacy-v2/README.md](legacy-v2/README.md)。
+
 ### 定位差异
 
-| 维度 | 方向一：LAN Remote Control | 方向二：legacy/rc14 |
-|------|---------------------------|--------------------|
-| 语言/框架 | Go + Flutter + Web | Python（Flask + PyQt5） |
-| 被控端 | Go 引擎（高性能） | rc14 重构版 Flask 服务器 |
-| 状态 | 活跃开发（当前主线） | 存档 + 安全重构维护 |
+| 维度 | 方向一：LAN Remote Control | 方向二：legacy/rc14 | 方向三：legacy-v2 |
+|------|---------------------------|--------------------|-------------------|
+| 语言/框架 | Go + Flutter + Web | Python（Flask + PyQt5） | Go（纯标准库 net/http） |
+| 被控端 | Go 引擎（高性能，TCP 9001/WebSocket） | rc14 重构版 Flask 服务器（MJPEG） | v2.0 Go 单二进制服务器（MJPEG，rc14 协议兼容） |
+| 状态 | 活跃开发（当前主线） | 存档 + 安全重构维护 | rc14 的推荐替代（免 Python/PyInstaller） |
 
 ---
 

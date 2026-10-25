@@ -22,10 +22,25 @@ from .core import (
     Config, VERSION, check_password, get_local_ip, mjpeg_stream,
     safe_upload_path, ensure_screen_worker, ensure_camera_worker,
     ensure_mic_worker, screen_thread,
+    acquire_stream, release_stream, active_streams, MAX_CONCURRENT_STREAMS,
 )
 from .webui import HTML_TEMPLATE
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MB cap
+
+
+def _managed_stream(gen, on_finish):
+    """Wrap a generator so `on_finish` runs when the stream ends by ANY route:
+    normal completion, client disconnect (GeneratorExit) or internal error."""
+    try:
+        for chunk in gen:
+            yield chunk
+    finally:
+        try:
+            gen.close()
+        except Exception:
+            pass
+        on_finish()
 
 
 def _auth_ok():
@@ -111,6 +126,8 @@ def create_app(port=5000):
     def video_feed():
         if not _auth_ok():
             return jsonify({"error": "unauthorized"}), 401
+        if not acquire_stream():
+            return jsonify({"error": "too many viewers"}), 503
         worker = ensure_screen_worker()
         interval = 1.0 / max(1, worker.fps)
         stop_flag = {"v": True}
@@ -120,9 +137,23 @@ def create_app(port=5000):
                 stop_flag["v"] = False
                 return b""
             worker.touch()
+            # skip duplicates: only hand out a frame when the encoder produced
+            # a NEW one (static screen => zero bytes on the wire, zero encode)
+            gen = worker.last_generation()
+            if getter.last_gen == gen and not getter.first:
+                return b""
+            getter.first = False
+            getter.last_gen = gen
             return worker.get_frame()
+        getter.last_gen = -1
+        getter.first = True
 
-        stream = mjpeg_stream(getter, interval, stop_check=lambda: stop_flag["v"])
+        def cleanup():
+            release_stream()
+
+        stream = _managed_stream(mjpeg_stream(getter, interval,
+                                              stop_check=lambda: stop_flag["v"]),
+                                 cleanup)
         return Response(stream, mimetype="multipart/x-mixed-replace; boundary=frameboundary",
                         headers={"Cache-Control": "no-store"})
 
@@ -132,13 +163,17 @@ def create_app(port=5000):
             return jsonify({"error": "unauthorized"}), 401
         if not Config.camera_enabled:
             return jsonify({"error": "camera disabled"}), 403
+        if not acquire_stream():
+            return jsonify({"error": "too many viewers"}), 503
         worker = ensure_camera_worker()
 
         def getter():
             worker.touch()
             return worker.get_frame()
 
-        stream = mjpeg_stream(getter, 1.0 / 15, lambda: server_state.get("running", True))
+        stream = _managed_stream(
+            mjpeg_stream(getter, 1.0 / 15, lambda: server_state.get("running", True)),
+            release_stream)
         return Response(stream, mimetype="multipart/x-mixed-replace; boundary=frameboundary",
                         headers={"Cache-Control": "no-store"})
 

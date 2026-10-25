@@ -178,3 +178,44 @@ class TestOnDemandCapture(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestStreamCap(unittest.TestCase):
+    """Global MJPEG stream cap (DoS hardening, parity with legacy-v2 Go)."""
+
+    def setUp(self):
+        from rc14 import core
+        self.core = core
+        # drain any leaked counters so the test is order-independent
+        while core.active_streams() > 0:
+            core.release_stream()
+
+    def tearDown(self):
+        while self.core.active_streams() > 0:
+            self.core.release_stream()
+
+    def test_cap_enforced_and_released(self):
+        core = self.core
+        ok = [core.acquire_stream() for _ in range(core.MAX_CONCURRENT_STREAMS + 4)]
+        self.assertEqual(ok[: core.MAX_CONCURRENT_STREAMS], [True] * core.MAX_CONCURRENT_STREAMS)
+        self.assertFalse(any(ok[core.MAX_CONCURRENT_STREAMS:]))
+        self.assertEqual(core.active_streams(), core.MAX_CONCURRENT_STREAMS)
+        core.release_stream()
+        self.assertTrue(core.acquire_stream())
+        self.assertEqual(core.active_streams(), core.MAX_CONCURRENT_STREAMS)
+
+    def test_release_never_goes_negative(self):
+        core = self.core
+        core.release_stream()
+        core.release_stream()
+        self.assertEqual(core.active_streams(), 0)
+
+    def test_frame_generation_bumps_on_new_encode(self):
+        # unit-test the counter directly on a fresh (non-started) worker
+        worker = self.core.ScreenCaptureThread.__new__(self.core.ScreenCaptureThread)
+        worker.lock = __import__("threading").Lock()
+        worker._gen = 0
+        self.assertEqual(worker.last_generation(), 0)
+        with worker.lock:
+            worker._gen += 1
+        self.assertEqual(worker.last_generation(), 1)

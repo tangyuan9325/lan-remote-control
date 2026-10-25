@@ -154,6 +154,8 @@ class ScreenCaptureThread(threading.Thread):
         self._cam = None             # dxcam backend (Windows)
         self._dxcam_failed = False
         self.stats = {"captured": 0, "reused": 0}
+        self._gen = 0                # frame generation counter: bumped on every
+                                     # NEW encode so streams can skip duplicates
 
     # -- settings -----------------------------------------------------------
     def update_settings(self, resolution=None, fps=None, quality=None):
@@ -244,6 +246,7 @@ class ScreenCaptureThread(threading.Thread):
                         data = self._encode(img)
                         with self.lock:
                             self.last_frame = data
+                            self._gen += 1
                         self.stats["captured"] += 1
                     else:
                         self.stats["reused"] += 1
@@ -274,6 +277,40 @@ class ScreenCaptureThread(threading.Thread):
     def get_frame(self):
         with self.lock:
             return self.last_frame or b""
+
+    def last_generation(self):
+        """Current frame generation id (0 before first frame)."""
+        with self.lock:
+            return self._gen
+
+
+# ---------------------------------------------------------------------------
+# Global MJPEG stream cap: a hostile LAN client must not be able to pin
+# hundreds of streaming generator threads against the server.
+# ---------------------------------------------------------------------------
+
+MAX_CONCURRENT_STREAMS = 8
+_streams_lock = threading.Lock()
+_active_streams = [0]
+
+
+def acquire_stream():
+    """Register one stream consumer; returns True if under the global cap."""
+    with _streams_lock:
+        if _active_streams[0] >= MAX_CONCURRENT_STREAMS:
+            return False
+        _active_streams[0] += 1
+        return True
+
+
+def release_stream():
+    with _streams_lock:
+        _active_streams[0] = max(0, _active_streams[0] - 1)
+
+
+def active_streams():
+    with _streams_lock:
+        return _active_streams[0]
 
 
 # ---------------------------------------------------------------------------
