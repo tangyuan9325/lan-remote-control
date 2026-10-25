@@ -99,6 +99,7 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_legacy_v2 != 'false' }}
         run: |
           cd legacy-v2
+          go mod tidy
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../remote-control-v2.0.0-windows-amd64.exe ./cmd/server
 
       - name: Create Release
