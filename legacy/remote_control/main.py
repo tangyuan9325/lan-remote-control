@@ -1,3 +1,23 @@
+def _deprecated():
+    import textwrap
+    print(textwrap.dedent("""\
+        ============================================================
+        [已弃用] main.py 是旧版单体入口（Flask + PyQt5 混写，存在
+        无密码、路径穿越、shell=True RCE 等已知漏洞，仅作历史存档）。
+
+        请改用重构后的安全版本 v1.4 (rc14 包)：
+            python -m rc14.main                     # GUI 控制面板
+            python -m rc14.main --headless \
+                --port 5000 --password s3cret       # 无 GUI，仅服务器
+            python tests/test_rc14.py               # 运行自检
+            build_rc14.bat                          # PyInstaller 一键打包
+        ============================================================"""))
+    raise SystemExit(1)
+
+
+_deprecated()  # guard FIRST: this archive file must never run its legacy server
+
+# ---- below is the archived original code (kept for reference only) ----
 import os
 import io
 import base64
@@ -691,5 +711,23 @@ def run_gui():
     
     sys.exit(app.exec_())
 
+def _deprecated():
+    import textwrap
+    print(textwrap.dedent("""\
+        ============================================================
+        [已弃用] main.py 是旧版单体入口（Flask + PyQt5 混写，存在
+        无密码、路径穿越、shell=True RCE 等已知漏洞，仅作历史存档）。
+
+        请改用重构后的安全版本 v1.4 (rc14 包)：
+            python -m rc14.main                     # GUI 控制面板
+            python -m rc14.main --headless \\
+                --port 5000 --password s3cret       # 无 GUI，仅服务器
+            python tests/test_rc14.py               # 运行自检
+            build_rc14.bat                          # PyInstaller 一键打包
+        ============================================================"""))
+    raise SystemExit(1)
+
+
 if __name__ == '__main__':
+    _deprecated()
     run_gui()

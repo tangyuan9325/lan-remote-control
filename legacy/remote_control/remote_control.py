@@ -1,3 +1,17 @@
+
+def _deprecated_entry():
+    import textwrap, os
+    print(textwrap.dedent("""\
+        ============================================================
+        [已弃用/存档] 本文件是历史版本，含已知漏洞（无密码、shell=True
+        RCE、路径穿越等），仅供查阅，请勿直接运行。
+        安全重构版入口：python -m rc14.main   （详见 README.md）
+        ============================================================"""))
+    raise SystemExit(1)
+
+
+_deprecated_entry()  # guard FIRST: archived vulnerable server must never run
+
 import os
 import io
 import base64
@@ -401,6 +415,7 @@ def run_server():
     print("🛑 按 Ctrl+C 停止服务器")
     
     app.run(host='0.0.0.0', port=5000, threaded=True, debug=False)
+
 
 if __name__ == '__main__':
     run_server()

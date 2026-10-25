@@ -1,3 +1,17 @@
+
+def _deprecated_entry():
+    import textwrap, os
+    print(textwrap.dedent("""\
+        ============================================================
+        [已弃用/存档] 本文件是历史版本，含已知漏洞（无密码、shell=True
+        RCE、路径穿越等），仅供查阅，请勿直接运行。
+        安全重构版入口：python -m rc14.main   （详见 README.md）
+        ============================================================"""))
+    raise SystemExit(1)
+
+
+_deprecated_entry()  # guard FIRST: archived vulnerable server must never run
+
 import os
 import io
 import base64
@@ -1889,6 +1903,7 @@ def run_gui():
     window = RemoteControlGUI()
     
     sys.exit(app.exec_())
+
 
 if __name__ == '__main__':
     run_gui()

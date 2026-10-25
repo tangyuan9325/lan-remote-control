@@ -1,4 +1,4 @@
-# LAN Remote Control Protocol (v1.2)
+# LAN Remote Control Protocol (v1.3)
 
 ## Ports
 | Service | Port | Protocol |

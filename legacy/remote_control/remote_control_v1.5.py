@@ -1,3 +1,17 @@
+
+def _deprecated_entry():
+    import textwrap, os
+    print(textwrap.dedent("""\
+        ============================================================
+        [已弃用/存档] 本文件是历史版本，含已知漏洞（无密码、shell=True
+        RCE、路径穿越等），仅供查阅，请勿直接运行。
+        安全重构版入口：python -m rc14.main   （详见 README.md）
+        ============================================================"""))
+    raise SystemExit(1)
+
+
+_deprecated_entry()  # guard FIRST: archived vulnerable server must never run
+
 import os
 import io
 import base64
@@ -1525,6 +1539,7 @@ class RemoteControlGUI(QMainWindow):
         self.statusBar.showMessage("服务器已停止")
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+
 
 if __name__ == "__main__":
     app_qt = QApplication(sys.argv)
