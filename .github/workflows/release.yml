@@ -51,25 +51,37 @@ jobs:
             git push origin "$TAG" || echo "Tag push may fail (already exists or permission)"
           fi
 
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0'
-          channel: stable
+          flutter-version: '3.24.5'
+          channel: 'stable'
 
-      - name: Build APK
+      - name: Build APK (controller)
         run: |
           cd android/remote_control_app
           flutter pub get
           flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk ../../lan-remote-control-android.apk
 
-      - name: Build Windows Server (Python, legacy fixed build)
+      - name: Build APK (server)
         run: |
-          pip install pyinstaller mss Pillow pynput 2>/dev/null || true
-          cd windows/server
-          pyinstaller --onefile --name RemoteControl-Server main.py 2>/dev/null || echo "PyInstaller skipped"
-          ls dist/ 2>/dev/null && cp dist/RemoteControl-Server ../../RemoteControl-Server.exe || echo "No server binary"
+          cd android/remote_control_server
+          flutter pub get
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk ../../lan-remote-control-android-server.apk
+
+      # NOTE: PyInstaller cannot cross-compile — a Linux runner produces ELF
+      # binaries, not Windows .exe. The Python fixed build (legacy rc14 /
+      # windows-server) is therefore built by the dedicated windows-build.yml
+      # workflow on a real Windows runner; here we only ship Go + Flutter
+      # artifacts (Go supports GOOS=windows cross-compilation natively).
 
       - name: Set up Go
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_go_v13 != 'false' }}
@@ -99,10 +111,10 @@ jobs:
 
             ### 构件清单 (Assets)
             - `lan-remote-control-android.apk` — Android 控制端 APK（Flutter，含文件管理/语音）
+            - `lan-remote-control-android-server.apk` — Android 被控端 APK（密码强制、连接数限制、会话看门狗）
             - `lan-remote-control-server-v1.3.0-windows-amd64.exe` — **Go 语言重构版**被控端引擎 v1.3.0（TCP 9001 + Web 8080，恒定时间密码校验、WebSocket 鉴权、SSRF 防护、输入注入、摄像头转发）
             - `remote-control-v2.0.0-windows-amd64.exe` — **legacy v2.0 Go 重写版**（Claude 风格 Web UI、按需采集帧差去重、MJPEG 并发上限、rc_token Cookie 鉴权、路径安全）
-            - `RemoteControl-Server.exe` — 老版本 Python (windows/server) 修复构建
-            - legacy v1.4.1 Python 修复版源码位于 `legacy/remote_control/rc14/`（`python -m rc14.main` 运行）
+            - legacy v1.4.1 Python 修复版源码位于 `legacy/remote_control/rc14/`（`python -m rc14.main` 运行；Windows exe 请通过 windows-build.yml 在 Windows runner 上构建——PyInstaller 不支持交叉编译）
 
             ### 安全与功能要点
             - 密码比较使用 crypto/subtle 恒定时间，杜绝时序侧信道
@@ -116,7 +128,7 @@ jobs:
             3. 同局域网设备经 UDP:9000 自动发现
           files: |
             lan-remote-control-android.apk
-            RemoteControl-Server.exe
+            lan-remote-control-android-server.apk
             lan-remote-control-server-v1.3.0-windows-amd64.exe
             remote-control-v2.0.0-windows-amd64.exe
           draft: false
