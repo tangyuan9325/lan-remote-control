@@ -9,47 +9,18 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v1.2.0)'
+        description: 'Release version (e.g. v2.0.0)'
         required: true
-        default: 'v1.2.0'
-      build_go_v13:
-        description: 'Build go-server v1.3 engine (windows exe)'
-        type: boolean
-        default: true
-      build_legacy_v2:
-        description: 'Build legacy-v2 Go server (windows exe)'
-        type: boolean
-        default: true
+        default: 'v2.0.0'
 
 jobs:
-  release:
+  # ---------------------------------------------------------------------------
+  # Job 1: Android APKs + Go Windows executables (Linux runner, cross-compile)
+  # ---------------------------------------------------------------------------
+  build-apps-go:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.head_commit.message, '[release]')
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Determine version
-        id: version
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "tag=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=v1.2.0" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create tag if needed
-        run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
-            git tag "$TAG"
-            git push origin "$TAG" || echo "Tag push may fail (already exists or permission)"
-          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -77,60 +48,181 @@ jobs:
           flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk ../../lan-remote-control-android-server.apk
 
-      # NOTE: PyInstaller cannot cross-compile — a Linux runner produces ELF
-      # binaries, not Windows .exe. The Python fixed build (legacy rc14 /
-      # windows-server) is therefore built by the dedicated windows-build.yml
-      # workflow on a real Windows runner; here we only ship Go + Flutter
-      # artifacts (Go supports GOOS=windows cross-compilation natively).
-
       - name: Set up Go
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_go_v13 != 'false' }}
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
       - name: Build go-server v1.3 engine (Windows exe)
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_go_v13 != 'false' }}
         run: |
           cd go-server
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../lan-remote-control-server-v1.3.0-windows-amd64.exe ./cmd/server
 
       - name: Build legacy-v2 Go server (Windows exe)
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_legacy_v2 != 'false' }}
         run: |
           cd legacy-v2
           go mod tidy
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../remote-control-v2.0.0-windows-amd64.exe ./cmd/server
 
+      - name: Upload staging artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-linux-build
+          path: |
+            lan-remote-control-android.apk
+            lan-remote-control-android-server.apk
+            lan-remote-control-server-v1.3.0-windows-amd64.exe
+            remote-control-v2.0.0-windows-amd64.exe
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 2: legacy v1.4.1 Python fixed build — MUST run on a real Windows
+  # runner because PyInstaller cannot cross-compile (Linux output is ELF).
+  # ---------------------------------------------------------------------------
+  build-python-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install Flask==3.0.0 Pillow==10.2.0 numpy==1.26.4 pywin32==306 pyinstaller==6.6.0
+
+      - name: Build rc14 one-file executable
+        working-directory: legacy/remote_control
+        shell: pwsh
+        run: |
+          # Synthetic entry script so PyInstaller bundles rc14 as a package
+          Set-Content -Path entry_rc14.py -Value "from rc14.main import main`nimport sys`nsys.exit(main())"
+          pyinstaller --noconfirm --onefile --name RemoteControl-Python-v1.4.1 `
+            --paths "." `
+            --hidden-import "rc14.main" --hidden-import "rc14.core" `
+            --hidden-import "rc14.server" --hidden-import "rc14.webui" `
+            --hidden-import "rc14.gui" `
+            --collect-submodules "rc14" `
+            --exclude-module "PyQt5" --exclude-module "cv2" `
+            --exclude-module "matplotlib" --exclude-module "tkinter" `
+            entry_rc14.py
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item "legacy\remote_control\dist\RemoteControl-Python-v1.4.1.exe" "staging\remote-control-python-v1.4.1-windows-amd64.exe" -Force
+          Get-ChildItem staging
+
+      - name: Upload staging artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-python-win
+          path: staging/*.exe
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 3: assemble the GitHub Release with ALL five assets
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [build-apps-go, build-python-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=v2.0.0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tag if needed
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Download staged artifacts (APK + Go exes)
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-linux-build
+          path: dist/
+
+      - name: Download staged artifacts (Python exe)
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-python-win
+          path: dist/
+
+      - name: Verify all five assets present
+        run: |
+          ls -la dist/
+          EXPECTED=(
+            lan-remote-control-android.apk
+            lan-remote-control-android-server.apk
+            lan-remote-control-server-v1.3.0-windows-amd64.exe
+            remote-control-v2.0.0-windows-amd64.exe
+            remote-control-python-v1.4.1-windows-amd64.exe
+          )
+          MISSING=0
+          for f in "${EXPECTED[@]}"; do
+            if [ ! -s "dist/$f" ]; then echo "MISSING: $f"; MISSING=1; fi
+          done
+          if [ "$MISSING" -eq 1 ]; then echo "::error::release assets incomplete"; exit 1; fi
+          echo "All 5 assets verified."
+
+      - name: Delete old broken release for this tag (if any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "${{ steps.version.outputs.tag }}" --yes 2>/dev/null || true
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.tag }}
+          name: LAN Remote Control ${{ steps.version.outputs.tag }}
           body: |
             ## LAN Remote Control ${{ steps.version.outputs.tag }}
 
-            ### 构件清单 (Assets)
-            - `lan-remote-control-android.apk` — Android 控制端 APK（Flutter，含文件管理/语音）
-            - `lan-remote-control-android-server.apk` — Android 被控端 APK（密码强制、连接数限制、会话看门狗）
-            - `lan-remote-control-server-v1.3.0-windows-amd64.exe` — **Go 语言重构版**被控端引擎 v1.3.0（TCP 9001 + Web 8080，恒定时间密码校验、WebSocket 鉴权、SSRF 防护、输入注入、摄像头转发）
-            - `remote-control-v2.0.0-windows-amd64.exe` — **legacy v2.0 Go 重写版**（Claude 风格 Web UI、按需采集帧差去重、MJPEG 并发上限、rc_token Cookie 鉴权、路径安全）
-            - legacy v1.4.1 Python 修复版源码位于 `legacy/remote_control/rc14/`（`python -m rc14.main` 运行；Windows exe 请通过 windows-build.yml 在 Windows runner 上构建——PyInstaller 不支持交叉编译）
+            ### Assets（共 5 项）
+            1. `lan-remote-control-android.apk` — Android 控制端 APK（Flutter，含文件管理/语音）
+            2. `lan-remote-control-android-server.apk` — Android 被控端 APK（密码强制、连接数限制、会话看门狗）
+            3. `lan-remote-control-server-v1.3.0-windows-amd64.exe` — **Go 语言重构版**被控端引擎 v1.3.0（TCP 9001 + Web 8080，恒定时间密码校验、WebSocket 鉴权、SSRF 防护、输入注入、摄像头转发）
+            4. `remote-control-v2.0.0-windows-amd64.exe` — **legacy v2.0 Go 重写版**（Claude 风格 Web UI、按需采集帧差去重、MJPEG 并发上限、rc_token Cookie 鉴权、路径安全）
+            5. `remote-control-python-v1.4.1-windows-amd64.exe` — **legacy v1.4.1 Python 修复版**（rc14：口令门 + rc_token Cookie、帧差按需采集、路径穿越/RCE 拦截、PyInstaller 单文件，由真实 Windows runner 构建）
 
             ### 安全与功能要点
             - 密码比较使用 crypto/subtle 恒定时间，杜绝时序侧信道
             - /ws、/camera、video_feed 全部强制鉴权；UDP 发现限速；连接数 DoS 上限
             - 文件传输：路径穿越拦截、危险字符过滤、1GB 大小限制
-            - 静态资源 go:embed 内嵌，PyInstaller spec 修复打包问题
+            - 静态资源 go:embed 内嵌；PyInstaller 仅能在真实 Windows runner 上产出 .exe（不支持交叉编译）
 
             ### Usage
             1. 在被控机运行任一 server exe（推荐 v1.3.0 Go 版），设置 `--password`
             2. 浏览器打开 `http://被控机IP:8080` 或安装 APK / 运行 v2.0 Web UI
             3. 同局域网设备经 UDP:9000 自动发现
           files: |
-            lan-remote-control-android.apk
-            lan-remote-control-android-server.apk
-            lan-remote-control-server-v1.3.0-windows-amd64.exe
-            remote-control-v2.0.0-windows-amd64.exe
+            dist/lan-remote-control-android.apk
+            dist/lan-remote-control-android-server.apk
+            dist/lan-remote-control-server-v1.3.0-windows-amd64.exe
+            dist/remote-control-v2.0.0-windows-amd64.exe
+            dist/remote-control-python-v1.4.1-windows-amd64.exe
           draft: false
           prerelease: false
