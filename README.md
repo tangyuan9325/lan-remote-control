@@ -2,7 +2,7 @@
 
 > 局域网远程控制套件（LAN Remote Control Suite）· v1.3.0
 > 类似向日葵 / ToDesk 的纯内网远程控制方案，无需中转服务器。
-> 本仓库由两个方向的项目合并而成，目录结构如下：
+> 本仓库由多个方向的项目合并而成，目录结构如下：
 
 ```
 lan-remote-control/                 # 方向一：主项目（本目录）
@@ -12,8 +12,9 @@ lan-remote-control/                 # 方向一：主项目（本目录）
 ├── build/                          #   构建产物
 ├── docs/                           #   协议文档
 ├── scripts/                        #   打包脚本
+├── adb-console/                    #   方向四：ADB 远程控制台（v1.1.0，经 adb 控制 Android）
 ├── legacy-v2/                      #   方向三：rc14 的 Go 语言重构版（v2.0，单二进制零依赖）
-└── legacy/remote_control/          # 方向二：早期实验项目（已安全重构为 rc14）
+└── legacy/remote_control/          #   方向二：早期实验项目（已安全重构为 rc14）
 ```
 
 ---
@@ -177,6 +178,59 @@ GOOS=windows GOARCH=amd64 go build -o dist/legacy-v2-server.exe ./cmd/server
 | 语言/框架 | Go + Flutter + Web | Python（Flask + PyQt5） | Go（纯标准库 net/http） |
 | 被控端 | Go 引擎（高性能，TCP 9001/WebSocket） | rc14 重构版 Flask 服务器（MJPEG） | v2.0 Go 单二进制服务器（MJPEG，rc14 协议兼容） |
 | 状态 | 活跃开发（当前主线） | 存档 + 安全重构维护 | rc14 的推荐替代（免 Python/PyInstaller） |
+
+---
+
+## 方向四：adb-console（ADB 远程控制台 · v1.1.0）
+
+**不走局域网协议，直接通过 ADB 控制 Android 手机**——电脑插上数据线（或无线调试）就能看屏、点屏、打字，被控手机**无需安装任何 App**。
+
+### 与其他方向的区别
+
+| 维度 | 方向一 / 二 / 三 | 方向四：adb-console |
+|---|---|---|
+| 控制对象 | Windows（+ Android 装 App） | Android（可裸机） |
+| 传输通道 | 局域网 TCP/WebSocket，需密码与发现机制 | ADB（USB / 无线调试），沿用 adb 自身授权 |
+| 被控端安装 | 需装服务端 | 不装也能用（`screenrecord` + `adb input`） |
+| 可选增强 | — | 装 Agent APK 可拿到硬件编码串流与无障碍手势 |
+
+### 组成
+
+- **`client/`**：Go 写的 Windows 客户端，内嵌浏览器控制台，双击即用、无运行时依赖；H.264 → **MJPEG 直通**转发给浏览器（不再在 Go 侧做像素转换），支持多设备标签页
+- **`android-agent/`**：可选 APK，`MediaProjection` 硬件编码串流（8585）+ 无障碍手势注入（8586），两个端口均只绑定设备回环，须经 `adb forward` 访问
+
+### 上手
+
+```bash
+# Windows 客户端（也可直接下载 Release 里的 exe）
+cd adb-console/client
+go build -trimpath -ldflags "-s -w" -o client.exe .
+./client.exe            # 自动打开 http://127.0.0.1:8500
+
+# 可选 Agent
+cd adb-console/android-agent && ./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
+
+### 这一版的审查与加固
+
+v1.1.0 对该子项目做了一次逐行代码审查，修掉 **24 项**问题，其中值得单独一提的：
+
+- Android 清单缺 `INTERNET` 权限 → Agent 两个端口**从未真正监听成功**；
+- WebSocket 的 `CheckOrigin` 恒返回 `true` → 任意恶意网页可跨站接管手机（CSWSH）；
+- `ReadFrame` 的 BGR→RGBA 转换索引错位 → 每一帧都偏色重排；
+- 解码链路改为 MJPEG 直通，管道数据量从 **6.2 MB/帧降到约 0.1 MB/帧**；
+- adb 调用批处理，`Info()` 从 **9 次进程降到 1 次**。
+
+完整清单（含成因、修复与已知限制）见 [adb-console/docs/CODE_REVIEW.md](adb-console/docs/CODE_REVIEW.md)，使用说明见 [adb-console/README.md](adb-console/README.md)。
+
+### 发布
+
+独立发版，tag 前缀为 `adb-console-v*`（不影响本仓库的 `v*` 主线发版）：
+
+```bash
+pwsh adb-console/scripts/build-release.ps1 -Version 1.1.0   # 产出 exe + apk + SHA256
+```
 
 ---
 
