@@ -1,0 +1,32 @@
+# ---- 构建产物 ----
+dist/
+*.exe
+!scripts/*.ps1
+client/client.exe
+client/config.json
+
+# ---- 第三方二进制（体积过大，改由 Release 附件分发）----
+client/third_party/ffmpeg/ffmpeg.exe
+
+# ---- Android 构建 ----
+android-agent/.gradle/
+android-agent/.kotlin/
+android-agent/local.properties
+android-agent/app/build/
+android-agent/build/
+*.apk
+*.aar
+*.iml
+.idea/
+
+# ---- 本地工具链与临时目录 ----
+_tools/
+_tmp/
+
+# ---- Go ----
+*.test
+*.out
+
+# ---- 系统 ----
+Thumbs.db
+.DS_Store

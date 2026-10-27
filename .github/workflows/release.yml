@@ -1,0 +1,109 @@
+name: release
+
+# 打 tag（v1.1.0 这类）时自动构建 Windows 客户端与 Android Agent，并发布到 Release。
+# 也可在 Actions 页面手动触发（workflow_dispatch），产物仅作为 workflow artifact 保留。
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-client:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: client/go.sum
+
+      - name: 单元测试
+        working-directory: client
+        run: go test ./...
+
+      - name: 构建客户端
+        working-directory: client
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}" -replace '^v', ''
+          if (-not $ver) { $ver = "dev" }
+          New-Item -ItemType Directory -Force -Path ../dist | Out-Null
+          go build -trimpath -ldflags "-s -w -X remote-control/client/internal/server.Version=$ver" `
+            -o ../dist/adb-remote-console-windows-amd64.exe .
+          & ../dist/adb-remote-console-windows-amd64.exe -version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-client
+          path: dist/adb-remote-console-windows-amd64.exe
+
+  android-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.0"
+
+      - name: 构建 APK
+        working-directory: android-agent
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-agent
+          path: android-agent/app/build/outputs/apk/debug/app-debug.apk
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-client, android-agent]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 整理产物
+        run: |
+          mkdir -p dist
+          cp artifacts/windows-client/adb-remote-console-windows-amd64.exe dist/
+          cp artifacts/android-agent/app-debug.apk dist/rc-agent-debug.apk
+          cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            ## 下载
+
+            | 文件 | 说明 |
+            | --- | --- |
+            | `adb-remote-console-windows-amd64.exe` | Windows 客户端，双击即用，无需运行时 |
+            | `rc-agent-debug.apk` | Android Agent（可选，用于低延迟串流与手势注入） |
+            | `SHA256SUMS.txt` | 校验和 |
+
+            ## 可选：ffmpeg
+
+            `ffmpeg.exe` 体积过大（100MB+）未随包发布。需要「录屏+ffmpeg」模式时，
+            从 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 下载 essentials 版本，
+            放到客户端同目录的 `third_party/ffmpeg/ffmpeg.exe`（或直接与 exe 同目录）。
+            没有 ffmpeg 时会自动降级为 PNG 截图模式。
+
+            ## 安全提示
+
+            客户端只监听 `127.0.0.1` 并校验 Host/Origin；Agent 端口只监听设备回环，
+            必须经 `adb forward` 访问。请仅用于自有设备。

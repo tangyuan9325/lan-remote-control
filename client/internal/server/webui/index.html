@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ADB 远程控制台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">ADB 远程控制台 <span id="ver"></span></div>
+  <div class="toolbar">
+    <button id="btnRefresh">刷新设备</button>
+    <button id="btnConnect">连接设备…</button>
+    <button id="btnPair">无线配对…</button>
+    <button id="btnDisconnect">断开全部</button>
+    <button id="btnSettings">设置…</button>
+    <span id="toolStatus" class="status"></span>
+  </div>
+</header>
+
+<div class="main">
+  <aside>
+    <div class="panel-title">设备列表</div>
+    <ul id="devList"></ul>
+    <div class="hint">设备在线后自动打开标签页<br>点击列表项可切换</div>
+  </aside>
+  <section id="tabs"></section>
+</div>
+
+<footer>
+  <div class="panel-title">日志 <button id="btnClearLog" class="mini">清空</button></div>
+  <pre id="logBox"></pre>
+</footer>
+
+<!-- 模态框 -->
+<div id="modalMask" class="hidden">
+  <div id="modal" class="modal">
+    <div id="modalTitle" class="modal-title"></div>
+    <div id="modalBody"></div>
+    <div class="modal-actions">
+      <button id="modalCancel" class="mini">取消</button>
+      <button id="modalOk" class="primary">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ADB远程控制 Agent</string>
+    <string name="accessibility_desc">由 ADB 远程控制台驱动：接收电脑下发的触摸手势与全局按键指令。</string>
+</resources>
